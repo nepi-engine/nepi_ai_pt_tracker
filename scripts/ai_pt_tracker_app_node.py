@@ -111,8 +111,8 @@ class pantilt_object_tracker(object):
     self.initParamServerValues(do_updates=False)
 
     # App Specific Subscribers
-    rospy.Subscriber('~set_pantilt_device', String, self.setPtTopicCb, queue_size = 10)
-    rospy.Subscriber('~set_target_class', String, self.setTargetClassCb, queue_size = 10)
+    rospy.Subscriber('~select_pantilt', String, self.setPtTopicCb, queue_size = 10)
+    rospy.Subscriber('~select_target', String, self.setTargetClassCb, queue_size = 10)
 
     rospy.Subscriber("~set_min_area_ratio", Float32, self.setMinAreaCb, queue_size = 10)
     rospy.Subscriber("~set_scan_speed_ratio", Float32, self.setScanSpeedCb, queue_size = 10)
@@ -191,7 +191,7 @@ class pantilt_object_tracker(object):
 
   def resetApp(self):
     nepi_ros.set_param(self,"~pt_namespace","")
-    nepi_ros.set_param(self,"~target_name",self.DEFAULT_TARGET)
+    nepi_ros.set_param(self,"~target_class",self.DEFAULT_TARGET)
     nepi_ros.set_param(self,"~min_ratio",self.DEFAULT_MIN_RATIO)
     nepi_ros.set_param(self,"~scan_speed_ratio",self.DEFAULT_SCAN_SPEED_RATIO)
     nepi_ros.set_param(self,"~scan_tilt_offset",self.DEFAULT_SCAN_TILT_ANGLE)
@@ -217,7 +217,7 @@ class pantilt_object_tracker(object):
   def initParamServerValues(self,do_updates = True):
     nepi_msg.publishMsgInfo(self," Setting init values to param values")
     self.init_pt_namespace = nepi_ros.get_param(self,"~pt_namespace","")
-    self.init_target_name = nepi_ros.get_param(self,"~target_name",self.DEFAULT_TARGET)
+    self.init_target_class = nepi_ros.get_param(self,"~target_class",self.DEFAULT_TARGET)
     self.init_min_area_ratio = nepi_ros.get_param(self,"~min_area_ratio",self.DEFAULT_MIN_AREA_RATIO)
     self.init_scan_speed_ratio = nepi_ros.get_param(self,"~scan_speed_ratio",self.DEFAULT_SCAN_SPEED_RATIO)
     self.init_scan_tilt_offset = nepi_ros.get_param(self,"~scan_tilt_offset",self.DEFAULT_SCAN_TILT_ANGLE)
@@ -230,7 +230,7 @@ class pantilt_object_tracker(object):
 
   def resetParamServer(self,do_updates = True):
     nepi_ros.set_param(self,"~pt_namespace",self.init_pt_namespace)
-    nepi_ros.set_param(self,"~target_name",self.init_target_name)
+    nepi_ros.set_param(self,"~target_class",self.init_target_class)
 
     nepi_ros.set_param(self,"~min_area_ratio",self.init_min_area_ratio)
     nepi_ros.set_param(self,"~scan_speed_ratio",self.init_scan_speed_ratio)
@@ -254,7 +254,8 @@ class pantilt_object_tracker(object):
     status_msg.classifier_running = self.classifier_running
     status_msg.classifier_connected = self.classifier_connected
 
-    status_msg.target_class = nepi_ros.get_param(self,"~target_name",self.init_target_name)
+    status_msg.available_targets_list = sorted(self.classes_list)
+    status_msg.target_class = nepi_ros.get_param(self,"~target_class",self.init_target_class)
     status_msg.target_detected = self.target_detected
 
     status_msg.is_running = self.is_running
@@ -475,7 +476,7 @@ class pantilt_object_tracker(object):
   ### Setup a regular background scan process based on timer callback
   def pt_scan_timer_callback(self,timer):
     if self.is_running == True:
-      target_name = nepi_ros.get_param(self,"~target_name",self.init_target_name)
+      target_class = nepi_ros.get_param(self,"~target_class",self.init_target_class)
       min_area_ratio =  nepi_ros.get_param(self,"~min_area_ratio",self.init_min_area_ratio)
       scan_speed_ratio = nepi_ros.get_param(self,"~scan_speed_ratio",self.init_scan_speed_ratio)
       scan_tilt_offset = nepi_ros.get_param(self,"~scan_tilt_offset",self.init_scan_tilt_offset)
@@ -520,7 +521,7 @@ class pantilt_object_tracker(object):
   # Action upon detection of object of interest
   def targetLocsCb(self,target_locs_msg):
     if self.is_running == True:
-      target_name = nepi_ros.get_param(self,"~target_name",self.init_target_name)
+      target_class = nepi_ros.get_param(self,"~target_class",self.init_target_class)
       min_area_ratio =  nepi_ros.get_param(self,"~min_area_ratio",self.init_min_area_ratio)
       scan_speed_ratio = nepi_ros.get_param(self,"~scan_speed_ratio",self.init_scan_speed_ratio)
       scan_tilt_offset = nepi_ros.get_param(self,"~scan_tilt_offset",self.init_scan_tilt_offset)
@@ -534,7 +535,7 @@ class pantilt_object_tracker(object):
       largest_box_area_ratio=0 # Initialize largest box area
       for target_loc in target_locs_msg.target_localizations:
         # Check for the object of interest and take appropriate actions
-        if target_loc.Class == target_name:
+        if target_loc.Class == target_class:
           # Check if largest box
           box_area_ratio = target_loc.area_ratio
           if box_area_ratio > largest_box_area_ratio:
@@ -567,7 +568,7 @@ class pantilt_object_tracker(object):
 
   ### Track box process based on current box center relative ratio of image
   def pt_track_box(self,object_error_x_ratio, object_error_y_ratio):
-    target_name = nepi_ros.get_param(self,"~target_name",self.init_target_name)
+    target_class = nepi_ros.get_param(self,"~target_class",self.init_target_class)
     min_area_ratio =  nepi_ros.get_param(self,"~min_area_ratio",self.init_min_area_ratio)
     scan_speed_ratio = nepi_ros.get_param(self,"~scan_speed_ratio",self.init_scan_speed_ratio)
     scan_tilt_offset = nepi_ros.get_param(self,"~scan_tilt_offset",self.init_scan_tilt_offset)

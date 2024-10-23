@@ -21,7 +21,9 @@ import Styles from "./Styles"
 import BooleanIndicator from "./BooleanIndicator"
 
 
+import AiDetectorMgr from "./NepiMgrAiDetector"
 import CameraViewer from "./CameraViewer"
+import NepiIFSaveData from "./Nepi_IF_SaveData"
 
 import {createShortUniqueValues, onDropdownSelectedSendStr, createMenuListFromStrList, createShortValuesFromNamespaces, onUpdateSetStateValue, onEnterSendFloatValue} from "./Utilities"
 
@@ -42,43 +44,34 @@ class AiPtTrackerApp extends Component {
       appName: 'app_ai_pt_tracker',
 	    appNamespace: null,
       baseNamespace: null,
-      imageTopic: 'app_ai_targeting/targeting_image',
-      imageText: 'app_ai_targeting/targeting_image',
 
-      viewableFolders: false,
-
-      home_folder: 'None',
-      current_folder: null,
-      selected_folder: 'Home',
-      current_folders: [],
-      supported_file_types: [],
-      selected_file: 'Home',
-      file_count: 0,
-      current_file: 'None',
-
-      paused: false,
-
-      size_options_list: ['None'],
-      set_size: 'None',
-      encoding_options_list: ['None'],
-      set_encoding: 'None',
-
-
-      set_random: false,
-      set_overlay: false,
-      min_max_delay: 1,
-      set_delay: 1,
-      pub_running: false,
+      classifier_name: "None",
+      classifier_state: "Stopped",
+      classifier_connected: false,
+            
+      available_targets_list: [],
+      target_class: "",
+      target_detected: false,
+            
+      pantilt_device: 0,
+      pantilt_connected: 0,
+      has_position_feedback: 0,
+      min_area_ratio: 0,
+      scan_speed_ratio: 0,
+      scan_tilt_offset: 0,
+      scan_pan_angle: 0,
+      track_speed_ratio: 0,
+      track_tilt_offset: 0,
+            
+      is_running: false,
+      is_scanning: false,
+      is_tracking: false,
 
       statusListener: null,
       connected: false,
       needs_update: true
 
     }
-
-    this.createFolderOptions = this.createFolderOptions.bind(this)
-    this.onChangeFolderSelection = this.onChangeFolderSelection.bind(this)
-    this.toggleViewableFolders = this.toggleViewableFolders.bind(this)
 
     this.statusListener = this.statusListener.bind(this)
     this.updateStatusListener = this.updateStatusListener.bind(this)
@@ -110,9 +103,27 @@ class AiPtTrackerApp extends Component {
   // Callback for handling ROS Status messages
   statusListener(message) {
     this.setState({
-
-      
-
+      classifier_state: message.classifier_state  ,
+      classifier_connected: message.classifier_connected  ,
+            
+      available_targets_list: message.available_targets_list  ,
+      target_class: message.target_class  ,
+      target_detected: message.target_detected  ,
+            
+      pantilt_device: message.pantilt_device  ,
+      pantilt_connected: message.pantilt_connected  ,
+      has_position_feedback: message.has_position_feedback  ,
+      min_area_ratio: message.min_area_ratio  ,
+      scan_speed_ratio: message.scan_speed_ratio  ,
+      scan_tilt_offset: message.scan_tilt_offset  ,
+      scan_pan_angle: message.scan_pan_angle  ,
+      track_speed_ratio: message.track_speed_ratio  ,
+      track_tilt_offset: message.track_tilt_offset  ,
+            
+      is_running: message.is_running ,
+      is_scanning: message.is_scanning  ,
+      is_tracking: message.is_tracking  
+    
   })
 
   this.setState({
@@ -162,16 +173,67 @@ class AiPtTrackerApp extends Component {
       this.state.statusListener.unsubscribe()
     }
   }
+ // Function for configuring and subscribing to ptx/status
+ onPTXUnitSelected(event) {
+  if (this.state.listener) {
+    this.state.listener.unsubscribe()
+  }
 
+  var idx = event.nativeEvent.target.selectedIndex
+  //var text = event.nativeEvent.target[idx].text
+  var value = event.target.value
+
+  // Handle the "None" option -- always index 0
+  if (idx === 0) {
+    this.setState({ disabled: true })
+    return
+  }
+
+  this.setState({ ptxNamespace: value })
+
+  var listener = this.props.ros.setupPTXStatusListener(
+      value,
+      this.ptxStatusListener
+    )
+    
+  this.setState({ ptxNamespace: value, listener: listener, disabled: false })
+}
+
+
+// Function for creating topic options for Select input
+createPTXOptions(caps_dictionaries, filter) {
+  const topics = Object.keys(caps_dictionaries)
+  var filteredTopics = topics
+  var i
+  if (filter) {
+    filteredTopics = []
+    for (i = 0; i < topics.length; i++) {
+      // includes does a substring search
+      if (topics[i].includes(filter)) {
+        filteredTopics.push(topics[i])
+      }
+    }
+  }
+
+  var items = []
+  items.push(<Option>{""}</Option>)
+  var unique_names = createShortUniqueValues(filteredTopics)
+  for (i = 0; i < filteredTopics.length; i++) {
+    items.push(<Option value={filteredTopics[i]}>{unique_names[i]}</Option>)
+  }
+
+  return items
+}
 
 
   renderAppControls() {
     const {sendTriggerMsg, sendStringMsg, sendBoolMsg} = this.props.ros
     const appNamespace = this.state.appNamespace
-    const pubRunning = this.state.pub_running
-    const appImageTopic = pubRunning === true ? this.state.appNamespace + "/images" : null
-    const viewableFolders = (this.state.viewableFolders || pubRunning === false)
     const NoneOption = <Option>None</Option>
+    const is_running = this.state.is_running
+    const pt_connected = this.state.pt_connected
+    const classifier_connected = this.state.classifier_connected
+    const can_start = (pt_connected && classifier_connected && is_running === false)
 
     return (
 
@@ -182,21 +244,21 @@ class AiPtTrackerApp extends Component {
 
         <div hidden={!this.state.connected}>
 
-          <Label title={"Publishing"}>
-              <BooleanIndicator value={pubRunning} />
+          <Label title={"Tracker Running"}>
+              <BooleanIndicator value={is_running} />
             </Label>
 
-              <div hidden={pubRunning}>
+              <div hidden={is_running}>
             <ButtonMenu>
               <Button 
-                disabled={pubRunning}
-                onClick={() => this.props.ros.sendTriggerMsg(appNamespace + "/start_pub")}>{"Start Publishing"}</Button>
+                disabled={is_running}
+                onClick={() => this.props.ros.sendTriggerMsg(appNamespace + "/start_tacker")}>{"Start Tracking"}</Button>
             </ButtonMenu>
             </div>
 
-            <div hidden={!pubRunning}>
+            <div hidden={!is_running}>
             <ButtonMenu>
-              <Button onClick={() => this.props.ros.sendTriggerMsg(appNamespace + "/stop_pub")}>{"Stop Publishing"}</Button>
+              <Button onClick={() => this.props.ros.sendTriggerMsg(appNamespace + "/stop_tracker")}>{"Stop Tracking"}</Button>
             </ButtonMenu>
             </div>
 
@@ -348,26 +410,27 @@ class AiPtTrackerApp extends Component {
     const pubRunning = this.state.pub_running
     const appImageTopic = pubRunning === true ? this.state.appNamespace + "/images" : null
     const viewableFolders = (this.state.viewableFolders || pubRunning === false)
+    const NoneOption = <Option>None</Option>
     return (
+
+      <Columns>
+      <Column>
 
         <Columns>
         <Column>
 
+        <Label title="Select Target"> </Label>
 
-            <label style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}>
-            {"Select Folder"}
-          </label>
+        <Select
+          id="select_target"
+          onChange={(event) => onDropdownSelectedSendStr.bind(this)(event, appNamespace + "/select_target")}
+          value={this.state.selected_target}
+        >
+          {this.state.available_targets_list
+            ? createMenuListFromStrList(this.state.available_targets_list, false, [],[],[])
+            : NoneOption}
+        </Select>
 
-            <div onClick={this.toggleViewableFolders} style={{backgroundColor: Styles.vars.colors.grey0}}>
-              <Select style={{width: "10px"}}/>
-            </div>
-            <div hidden={viewableFolders === false}>
-            {folderOptions.map((folder) =>
-            <div onClick={this.onChangeFolderSelection}>
-              <body value = {folder} style={{color: Styles.vars.colors.black}}>{folder}</body>
-            </div>
-            )}
-            </div>
     
 
         </Column>
@@ -379,7 +442,10 @@ class AiPtTrackerApp extends Component {
         </Columns>
 
 
+
+
         <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
+        
 
         <div hidden={!this.state.connected}>
 
@@ -408,6 +474,9 @@ class AiPtTrackerApp extends Component {
         </Columns>
       
        </div>
+
+    </Column>
+    </Columns>
 
 
 
