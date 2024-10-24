@@ -14,8 +14,8 @@ APP_DICT = dict(
     description = 'Application for tracking a target based on AI detected objects',
     pkg_name = 'nepi_app__pt_tracker',
     group_name = 'AI',
-    config_file = 'app__pt_tracker.yaml',
-    app_file = '_pt_tracker_app_node.py',
+    config_file = 'app_ai_pt_tracker.yaml',
+    app_file = 'pt_tracker_app_node.py',
     node_name = 'app_ai_pt_tracker'
 )
 RUI_DICT = dict(
