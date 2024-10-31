@@ -1,0 +1,13 @@
+APP_DICT:
+  description: Application for tracking a target based on AI detected objects
+  pkg_name: nepi_app_ai_pt_tracker
+  group_name: AI
+  config_file: app_ai_pt_tracker.yaml
+  app_file: pt_tracker_app_node.py
+  node_name: app_ai_pt_tracker
+RUI_DICT:
+  rui_menu_name: AI PanTilt Tracker
+  rui_files:
+  - NepiAppPtTracker.js
+  rui_main_file: NepiAppPtTracker.js
+  rui_main_class: AiPtTrackerApp
