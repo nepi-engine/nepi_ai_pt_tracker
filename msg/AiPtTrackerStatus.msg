@@ -1,10 +1,17 @@
 bool classifier_running
+bool targeting_running
+bool tracking_enabled
 
 string classifier_name
 string classifier_state
 string classifier_connected
 
-string target_class
+string image_topic
+bool use_live_image
+bool use_last_image
+
+string[] available_classes_list
+string selected_class
 bool target_detected
 
 string pantilt_device
@@ -20,5 +27,7 @@ float32 track_tilt_offset
 bool is_running
 bool is_scanning
 bool is_tracking
+
+float32[] xy_error_degs
 
 

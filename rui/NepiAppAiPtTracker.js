@@ -45,17 +45,25 @@ class AiPtTrackerApp extends Component {
 	    appNamespace: null,
       baseNamespace: null,
 
-      classifier_name: "None",
-      classifier_state: "Stopped",
-      classifier_connected: false,
+      tracking_enabled: false,
+
+      classifier_running: false,
+      targeting_running: false,
+
+      image_topic: "None",
+      use_live_image: false,
+      use_last_image: false,
             
-      available_targets_list: [],
-      target_class: "",
+      available_classes_list: [],
+      selected_class: "None",
       target_detected: false,
             
-      pantilt_device: 0,
-      pantilt_connected: 0,
-      has_position_feedback: 0,
+      pantilt_device: "None",
+      pantilt_connected: false,
+      has_position_feedback: false,
+      max_scan_time_sec: 10,
+      scan_time_sec: 5,
+
       min_area_ratio: 0,
       scan_speed_ratio: 0,
       scan_tilt_offset: 0,
@@ -63,7 +71,6 @@ class AiPtTrackerApp extends Component {
       track_speed_ratio: 0,
       track_tilt_offset: 0,
             
-      is_running: false,
       is_scanning: false,
       is_tracking: false,
 
@@ -76,8 +83,6 @@ class AiPtTrackerApp extends Component {
     this.statusListener = this.statusListener.bind(this)
     this.updateStatusListener = this.updateStatusListener.bind(this)
     this.getAppNamespace = this.getAppNamespace.bind(this)
-    this.getBaseNamespace = this.getBaseNamespace.bind(this)
-
 
   }
 
@@ -91,28 +96,31 @@ class AiPtTrackerApp extends Component {
     return appNamespace
   }
 
-  getBaseNamespace(){
-    const { namespacePrefix, deviceId} = this.props.ros
-    var baseNamespace = null
-    if (namespacePrefix !== null && deviceId !== null){
-      baseNamespace = "/" + namespacePrefix + "/" + deviceId 
-    }
-    return baseNamespace
-  }
+
 
   // Callback for handling ROS Status messages
   statusListener(message) {
     this.setState({
-      classifier_state: message.classifier_state  ,
-      classifier_connected: message.classifier_connected  ,
+
+      tracking_enabled: message.tracking_enabled,
+
+      classifier_running: message.classifier_running  ,
+      targeting_running: message.targeting_running  ,
             
-      available_targets_list: message.available_targets_list  ,
-      target_class: message.target_class  ,
+      image_topic: message.image_topic,
+      use_live_image: message.use_live_image,
+      use_last_image: message.use_last_image,
+
+      available_classes_list: message.available_classes_list  ,
+      selected_class: message.selected_class  ,
       target_detected: message.target_detected  ,
-            
+
       pantilt_device: message.pantilt_device  ,
       pantilt_connected: message.pantilt_connected  ,
       has_position_feedback: message.has_position_feedback  ,
+      max_scan_time_sec: message.max_scan_time_sec,
+      scan_time_sec: message.scan_time_sec,
+
       min_area_ratio: message.min_area_ratio  ,
       scan_speed_ratio: message.scan_speed_ratio  ,
       scan_tilt_offset: message.scan_tilt_offset  ,
@@ -120,7 +128,6 @@ class AiPtTrackerApp extends Component {
       track_speed_ratio: message.track_speed_ratio  ,
       track_tilt_offset: message.track_tilt_offset  ,
             
-      is_running: message.is_running ,
       is_scanning: message.is_scanning  ,
       is_tracking: message.is_tracking  
     
@@ -332,16 +339,20 @@ createPTXOptions(caps_dictionaries, filter) {
               </Toggle>
         </Label>
 
-        <div hidden={this.state.paused === false}>
-            <ButtonMenu>
-              <Button onClick={() => this.props.ros.sendTriggerMsg(appNamespace + "/step_backward")}>{"Back"}</Button>
-            </ButtonMenu>
-
-            <ButtonMenu>
-              <Button onClick={() => this.props.ros.sendTriggerMsg(appNamespace + "/step_forward")}>{"Forward"}</Button>
-            </ButtonMenu>
-
-            </div>
+        <Label title="Use Live Image">
+              <Toggle
+              checked={this.state.use_live_image===true}
+              onClick={() => sendBoolMsg(appNamespace + "/use_live_image",!this.state.use_live_image)}>
+              </Toggle>
+        </Label>
+        
+        
+        <Label title="Use Last Image">
+              <Toggle
+              checked={this.state.use_last_image===true}
+              onClick={() => sendBoolMsg(appNamespace + "/use_last_image",!this.state.use_last_image)}>
+              </Toggle>
+        </Label>
         </div>
 
         </Column>
@@ -353,63 +364,9 @@ createPTXOptions(caps_dictionaries, filter) {
 
 
 
-
-  // Function for creating image topic options.
-  createFolderOptions() {
-    const cur_folder = this.state.current_folder
-    const sel_folder = this.state.selected_folder
-    var items = []
-    if (cur_folder){
-      items.push(<Option value={"Home"}>{"Home"}</Option>) 
-      if (sel_folder !== 'Home'){
-        items.push(<Option value={"Back"}>{"Back"}</Option>) 
-      }
-      const folders = this.state.current_folders
-      for (var i = 0; i < folders.length; i++) {
-        items.push(<Option value={folders[i]}>{folders[i]}</Option>)
-      }
-    }
-    return items
-  }
-
-  onChangeFolderSelection(event) {
-    const {sendTriggerMsg, sendStringMsg} = this.props.ros
-    const namespace = this.state.appNamespace
-    const setNamespace = namespace + "/select_folder"
-    const homeNamespace = namespace + "/home_folder"
-    const backNamespace = namespace + "/back_folder"
-    const home_folder = this.state.home_folder
-    const value = event.target.value
-    if (namespace !== null){    
-      var selector_idx = 0
-      if (value === 'Home') {
-        sendTriggerMsg(homeNamespace)
-      }
-      else if (value === 'Back') {
-        sendTriggerMsg(backNamespace)
-      }
-      else {
-        sendStringMsg(setNamespace,value)
-      }
-    }
-    this.setState({selected_folder: value})
-  }
-
-
-
-  toggleViewableFolders() {
-    const viewable = !this.state.viewableFolders
-    this.setState({viewableFolders: viewable})
-  }
-
-
  renderApp() {
     const {sendTriggerMsg, sendStringMsg} = this.props.ros
     const appNamespace = this.state.appNamespace
-    const folderOptions = this.createFolderOptions()
-    const pubRunning = this.state.pub_running
-    const appImageTopic = pubRunning === true ? this.state.appNamespace + "/images" : null
-    const viewableFolders = (this.state.viewableFolders || pubRunning === false)
     const NoneOption = <Option>None</Option>
     return (
 
@@ -419,15 +376,15 @@ createPTXOptions(caps_dictionaries, filter) {
         <Columns>
         <Column>
 
-        <Label title="Select Target"> </Label>
+        <Label title="Select Class"> </Label>
 
         <Select
-          id="select_target"
-          onChange={(event) => onDropdownSelectedSendStr.bind(this)(event, appNamespace + "/select_target")}
-          value={this.state.selected_target}
+          id="select_class"
+          onChange={(event) => onDropdownSelectedSendStr.bind(this)(event, appNamespace + "/select_class")}
+          value={this.state.selected_class}
         >
-          {this.state.available_targets_list
-            ? createMenuListFromStrList(this.state.available_targets_list, false, [],[],[])
+          {this.state.available_classes_list
+            ? createMenuListFromStrList(this.state.available_classes_list, false, [],[],[])
             : NoneOption}
         </Select>
 
@@ -447,38 +404,28 @@ createPTXOptions(caps_dictionaries, filter) {
         <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
         
 
-        <div hidden={!this.state.connected}>
-
         <Columns>
-        <Column>
+              <Column>
 
-          <ButtonMenu>
-          <Button onClick={() => sendTriggerMsg( appNamespace + "/reset_app")}>{"Reset App"}</Button>
+              <ButtonMenu>
+            <Button onClick={() => sendTriggerMsg( appNamespace + "/reset_app")}>{"Reset App"}</Button>
           </ButtonMenu>
 
+            <ButtonMenu>
+              <Button onClick={() => sendTriggerMsg(appNamespace + "/save_config")}>{"Save Config"}</Button>
+        </ButtonMenu>
+
+        <ButtonMenu>
+              <Button onClick={() => sendTriggerMsg( appNamespace + "/reset_config")}>{"Reset Config"}</Button>
+        </ButtonMenu>
+
+ 
         </Column>
-        <Column>
+        </Columns>
 
-          <ButtonMenu>
-          <Button onClick={() => sendTriggerMsg(appNamespace + "/reset_config")}>{"Reset Config"}</Button>
-          </ButtonMenu>
-
-        </Column>
-        <Column>
-
-          <ButtonMenu>
-          <Button onClick={() => sendTriggerMsg(appNamespace + "/save_config")}>{"Save Config"}</Button>
-          </ButtonMenu>
 
         </Column>
         </Columns>
-      
-       </div>
-
-    </Column>
-    </Columns>
-
-
 
     )
   }
@@ -487,8 +434,8 @@ createPTXOptions(caps_dictionaries, filter) {
 
   renderImageViewer(){
     const connected = this.state.connected
-    const baseNamespace = this.getBaseNamespace()
-    const imageNamespace = (connected) ? baseNamespace + "/" + this.state.imageTopic : null 
+    const appnamespace = this.getAppNamespace()
+    const imageNamespace = (connected) ? appNamespace + "/tracking_image" : null 
     return (
 
       <CameraViewer

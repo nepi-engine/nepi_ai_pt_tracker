@@ -27,8 +27,9 @@ from nepi_edge_sdk_base import nepi_msg
 
 from std_msgs.msg import UInt8, Empty, Float32
 from sensor_msgs.msg import Image
-from nepi_ros_interfaces.msg import PanTiltLimits, PanTiltPosition, PanTiltStatus, StringArray
-from darknet_ros_msgs.msg import TargetLocalization, TargetLocalizations, ObjectCount
+from nepi_ros_interfaces.msg import PanTiltLimits, PanTiltPosition, SingleAxisTimedMove, PanTiltStatus, StringArray
+from nepi_ros_interfaces.msg import AiTargetingStatus, TargetLocalization, TargetLocalizations, ObjectCount
+from nepi_app_ai_pt_tracker.msg import AiPtTrackingStatus, TrackingErrors
 
 #from nepi_app_ai_pt_traker.msg import AiPtTrackerStatus
 
@@ -49,7 +50,8 @@ class pantilt_object_tracker(object):
   PTX_OBJECT_TILT_OFFSET_RATIO = 0.15 # Adjust tilt center to lower or raise the calculated object center
   PTX_OBJ_CENTERED_BUFFER_RATIO = 0.15 # Hysteresis band about center of image for tracking purposes
 
-  DEFAULT_TARGET = "person"
+  DEFAULT_CLASS = "person"
+  DEFAULT_SCAN_TIME = 5.0
   DEFAULT_MIN_AREA_RATIO = 0.01 # Filters background targets.
   DEFAULT_SCAN_SPEED_RATIO = 0.5
   DEFAULT_SCAN_TILT_DEG = 0.15
@@ -59,21 +61,25 @@ class pantilt_object_tracker(object):
 
   STATUS_UPDATE_TIME = 1
   PTX_UPDATE_TIME = 1
+
+  MAX_SCAN_TIME = 10
   
-  classifier_connected = False
-  classes_list = []
-  current_image_topic = ""
-  current_classifier = ""
-  current_classifier_state = "Stopped"
+  data_products = ["tracking_image"]
+
   classifier_running = False
-  last_classifier = ""
+  targeting_running = False
+
+  targeting_status_msg = None
+
+  current_image_topic = ""
   last_image_topic = ""
+  ros_message_img = None
 
-
+  classes_list = []
   target_detected = False
 
-
   pt_connected = False
+  has_position_feedback = False
   pt_status_msg = None
   pan_scan_direction = 1 # Keep track of current scan direction (1: Positive Limit, -1: Negative Limit)
   last_object_pan_ratio=0
@@ -86,8 +92,12 @@ class pantilt_object_tracker(object):
   is_running = False
   is_scanning = False
   is_tracking = False
-  has_position_feedback = False
 
+  xy_errors_deg = [0.0,0.0]
+
+
+  pos_scan_dir = 1
+  timed_scan_dir = 1
 
   #######################
   ### Node Initialization
@@ -102,8 +112,20 @@ class pantilt_object_tracker(object):
     ##############################
     ## Initialize Class Variables
     
+    # Message Image to publish when detector not running
+    message = "WAITING FOR AI TARGETING TO START"
+    cv2_img = nepi_img.create_message_image(message)
+    self.ros_message_img = nepi_img.cv2img_to_rosimg(cv2_img)
+
+
     # Setup Node Publishers
-    #self.status_pub = rospy.Publisher("~status", AiPtTrackingStatus, queue_size=1, latch=True)
+    self.status_pub = rospy.Publisher("~status", AiPtTrackingStatus, queue_size=1, latch=True)
+    self.errors_pub = rospy.Publisher("~errors", TrackingErrors, queue_size=1, latch=True)
+    self.image_pub = rospy.Publisher("~tracking_image",Image,queue_size=1, latch = True)
+    time.sleep(1)
+    self.ros_message_img.header.stamp = nepi_ros.time_now()
+    self.image_pub.publish(self.ros_message_img)
+
 
     # Class Subscribers
     ## App Setup ########################################################
@@ -111,9 +133,13 @@ class pantilt_object_tracker(object):
     self.initParamServerValues(do_updates=False)
 
     # App Specific Subscribers
-    rospy.Subscriber('~select_pantilt', String, self.setPtTopicCb, queue_size = 10)
-    rospy.Subscriber('~select_target', String, self.setTargetClassCb, queue_size = 10)
+    rospy.Subscriber('~select_class', String, self.setClassCb, queue_size = 10)
 
+    set_image_input_sub = rospy.Subscriber('~use_live_image', Bool, self.setImageLiveCb, queue_size = 10)
+    set_image_delay_sub = rospy.Subscriber('~use_last_image', Bool, self.setImageLastCb, queue_size = 10)
+
+    rospy.Subscriber('~select_pantilt', String, self.setPtTopicCb, queue_size = 10)
+    rospy.Subscriber("~set_scan_time", Float32, self.setScanTimeCb, queue_size = 10)
     rospy.Subscriber("~set_min_area_ratio", Float32, self.setMinAreaCb, queue_size = 10)
     rospy.Subscriber("~set_scan_speed_ratio", Float32, self.setScanSpeedCb, queue_size = 10)
     rospy.Subscriber("~set_scan_tilt_offset", Float32, self.setScanTiltOffsetCb, queue_size = 10)
@@ -121,8 +147,7 @@ class pantilt_object_tracker(object):
     rospy.Subscriber("~set_track_speed_ratio", Float32, self.setTrackSpeedCb, queue_size = 10)
     rospy.Subscriber("~set_track_tilt_offset", Float32, self.setTrackTiltOffsetCb, queue_size = 10)
 
-    rospy.Subscriber('~start_pub', Empty, self.startTrackerCb)
-    rospy.Subscriber('~stop_pub', Empty, self.stopTrackerCb)
+    rospy.Subscriber('~enable_tracker', Bool, self.enableTrackerCb)
   
 
     # Reset Params
@@ -130,14 +155,21 @@ class pantilt_object_tracker(object):
 
 
     ## Class subscribers
-    # AI Detector Subscriber Topics
+    # AI Targeting Subscriber Topics
+
+    AI_TARGETING_STATUS_TOPIC = self.base_namespace + "app_ai_targeting/status"
+    nepi_msg.publishMsgInfo(self,"Waiting for Targeting Msg: " + AI_TARGETING_STATUS_TOPIC )
+    nepi_ros.wait_for_topic(AI_TARGETING_STATUS_TOPIC)
+    rospy.Subscriber(AI_TARGETING_STATUS_TOPIC, AiTargetingStatus, self.targetingStatusCb, queue_size = 1)
+
     AI_FOUND_TARGET_TOPIC = self.base_namespace + "app_ai_targeting/target_count"
     nepi_msg.publishMsgInfo(self,"Waiting for Targeting Msg: " + AI_FOUND_TARGET_TOPIC )
     nepi_ros.wait_for_topic(AI_FOUND_TARGET_TOPIC)
-    rospy.Subscriber(AAI_TARGET_LOCS_TOPIC, TargetLocalizations, self.targetLocsCb, queue_size = 1)
+    rospy.Subscriber(AI_FOUND_TARGET_TOPIC, ObjectCount, self.foundTargetCb, queue_size = 1)
+   
 
     AI_TARGET_LOCS_TOPIC = self.base_namespace + "app_ai_targeting/targeting_localizations"
-    rospy.Subscriber(AI_FOUND_TARGET_TOPIC, ObjectCount, self.foundTargetCb, queue_size = 1)
+    rospy.Subscriber(AI_TARGET_LOCS_TOPIC, TargetLocalizations, self.targetLocsCb, queue_size = 1)
 
 
     #######################
@@ -155,13 +187,22 @@ class pantilt_object_tracker(object):
     PTX_STOP_TOPIC = PTX_NAMESPACE + "stop_moving"
     PTX_GOTO_PAN_RATIO_TOPIC = PTX_NAMESPACE + "jog_to_yaw_ratio"
     PTX_GOTO_TILT_RATIO_TOPIC = PTX_NAMESPACE + "jog_to_pitch_ratio"
+
+
+    PTX_JOG_PAN_TOPIC = PTX_NAMESPACE + "jog_timed_yaw"
+    PTX_JOG_TILT_TOPIC = PTX_NAMESPACE + "jog_timed_pitch"
+
     PTX_SET_SOFT_LIMITS_TOPIC = PTX_NAMESPACE + "set_soft_limits"
 
     ## Create Class Publishers
     self.send_pt_home_pub = rospy.Publisher(PTX_GOHOME_TOPIC, Empty, queue_size=10)
     self.set_pt_speed_ratio_pub = rospy.Publisher(PTX_SET_SPEED_RATIO_TOPIC, Float32, queue_size=10)
+    self.set_pt_position_pub = rospy.Publisher(jog_to_position, PanTiltPosition, queue_size=10)
     self.set_pt_pan_ratio_pub = rospy.Publisher(PTX_GOTO_PAN_RATIO_TOPIC, Float32, queue_size=10)
     self.set_pt_tilt_ratio_pub = rospy.Publisher(PTX_GOTO_TILT_RATIO_TOPIC, Float32, queue_size=10)
+    self.set_pt_pan_jog_pub = rospy.Publisher(PTX_JOG_PAN_TOPIC, Float32, queue_size=10)
+    self.set_pt_tilt_jog_pub = rospy.Publisher(PTX_JOG_TILT_TOPIC, Float32, queue_size=10)
+
     self.set_pt_soft_limits_pub = rospy.Publisher(PTX_SET_SOFT_LIMITS_TOPIC, PanTiltLimits, queue_size=10)
     self.pt_stop_motion_pub = rospy.Publisher(PTX_STOP_TOPIC, Empty, queue_size=10)
 
@@ -170,6 +211,8 @@ class pantilt_object_tracker(object):
 
 
     nepi_ros.timer(nepi_ros.duration(self.STATUS_UPDATE_TIME), self.updaterCb)
+    scan_time = nepi_ros.get_param(self,"~scan_time",self.init_scan_time)
+    rospy.Timer(rospy.Duration(scan_time), self.scanTimeCb)
 
     ## Start Node Processes
     # Set up the timer that start scanning when no objects are detected
@@ -190,8 +233,15 @@ class pantilt_object_tracker(object):
     self.resetApp()
 
   def resetApp(self):
+    nepi_ros.set_param(self,"~tracking_enabled",False)
+
+    nepi_ros.set_param(self,'~use_live_image',True)
+    nepi_ros.set_param(self,'~use_last_image',True)
+
+    nepi_ros.set_param(self,"~selected_class",self.DEFAULT_CLASS)
+
     nepi_ros.set_param(self,"~pt_namespace","")
-    nepi_ros.set_param(self,"~target_class",self.DEFAULT_TARGET)
+    nepi_ros.set_param(self,"~scan_time",self.DEFAULT_SCAN_TIME)
     nepi_ros.set_param(self,"~min_ratio",self.DEFAULT_MIN_RATIO)
     nepi_ros.set_param(self,"~scan_speed_ratio",self.DEFAULT_SCAN_SPEED_RATIO)
     nepi_ros.set_param(self,"~scan_tilt_offset",self.DEFAULT_SCAN_TILT_ANGLE)
@@ -216,22 +266,33 @@ class pantilt_object_tracker(object):
 
   def initParamServerValues(self,do_updates = True):
     nepi_msg.publishMsgInfo(self," Setting init values to param values")
+    self.init_tracking_enabled = nepi_ros.get_param(self,"~tracking_enabled",False)
+
+    self.init_use_live_image = nepi_ros.get_param(self,'~use_live_image',True)
+    self.init_use_last_image = nepi_ros.get_param(self,'~use_last_image',True)
+
+    self.init_sel_class = nepi_ros.get_param(self,"~selected_class",self.DEFAULT_CLASS)
+
     self.init_pt_namespace = nepi_ros.get_param(self,"~pt_namespace","")
-    self.init_target_class = nepi_ros.get_param(self,"~target_class",self.DEFAULT_TARGET)
+    self.init_scan_time = nepi_ros.get_param(self,"~scan_time",self.DEFAULT_SCAN_TIME)
     self.init_min_area_ratio = nepi_ros.get_param(self,"~min_area_ratio",self.DEFAULT_MIN_AREA_RATIO)
     self.init_scan_speed_ratio = nepi_ros.get_param(self,"~scan_speed_ratio",self.DEFAULT_SCAN_SPEED_RATIO)
     self.init_scan_tilt_offset = nepi_ros.get_param(self,"~scan_tilt_offset",self.DEFAULT_SCAN_TILT_ANGLE)
     self.init_scan_pan_angle = nepi_ros.get_param(self,"~scan_pan_angle",self.DEFAULT_SCAN_PAN_DEGS)
     self.init_track_speed_ratio = nepi_ros.get_param(self,"~track_speed_ratio",self.DEFAULT_TRACK_SPEED_RATIO)
     self.init_track_tilt_offset = nepi_ros.get_param(self,"~track_tilt_offset",self.DEFAULT_TRACK_TILT_OFFSET)
-  
-    self.init_running =  nepi_ros.get_param(self,'~running',  False)
     self.resetParamServer(do_updates)
 
   def resetParamServer(self,do_updates = True):
-    nepi_ros.set_param(self,"~pt_namespace",self.init_pt_namespace)
-    nepi_ros.set_param(self,"~target_class",self.init_target_class)
+    nepi_ros.set_param(self,"~tracking_enabled",self.init_tracking_enabled)
 
+    nepi_ros.set_param(self,'~use_live_image',self.init_use_live_image)
+    nepi_ros.set_param(self,'~use_last_image',self.init_use_last_image)
+
+    nepi_ros.set_param(self,"~selected_class",self.init_sel_class)
+
+    nepi_ros.set_param(self,"~pt_namespace",self.init_pt_namespace)
+    nepi_ros.set_param(self,"~scan_time",self.init_scan_time)
     nepi_ros.set_param(self,"~min_area_ratio",self.init_min_area_ratio)
     nepi_ros.set_param(self,"~scan_speed_ratio",self.init_scan_speed_ratio)
     nepi_ros.set_param(self,"~scan_tilt_offset",self.init_scan_tilt_offset)
@@ -239,11 +300,9 @@ class pantilt_object_tracker(object):
     nepi_ros.set_param(self,"~track_speed_ratio",self.init_track_speed_ratio)
     nepi_ros.set_param(self,"~track_tilt_offset", self.init_track_tilt_offset)
 
-    nepi_ros.set_param(self,'~running',  self.init_running)
-
-      if do_updates:
-          self.updateFromParamServer()
-          self.publish_status()
+    if do_updates:
+        self.updateFromParamServer()
+        self.publish_status()
 
 
   ###################
@@ -251,23 +310,24 @@ class pantilt_object_tracker(object):
   def publish_status(self):
     status_msg = AiPtTrackerStatus()
 
+    status_msg.tracking_enabled = nepi_ros.get_param(self,"~tracking_enabled",self.init_tracking_enabled)
+    
     status_msg.classifier_running = self.classifier_running
-    status_msg.classifier_connected = self.classifier_connected
+    status_msg.targeting_running = self.targeting_running
 
-    status_msg.available_targets_list = sorted(self.classes_list)
-    status_msg.target_class = nepi_ros.get_param(self,"~target_class",self.init_target_class)
+    status_msg.image_topic = self.current_image_topic
+    status_msg.use_live_image = nepi_ros.get_param(self,'~use_live_image',self.init_use_live_image)
+    status_msg.use_last_image = nepi_ros.get_param(self,'~use_last_image',self.init_use_last_image)
+
+    status_msg.available_classes_list = sorted(self.classes_list)
+    status_msg.selected_class = nepi_ros.get_param(self,"~selected_class",self.init_sel_class)
     status_msg.target_detected = self.target_detected
 
-    status_msg.is_running = self.is_running
-    status_msg.is_scanning = self.is_scanning
-    status_msg.is_tracking = self.is_tracking
-
+    status_msg.pantilt_device = nepi_ros.get_param(self,"~pt_namespace",self.init_pt_namespace)
     status_msg.pantilt_connected = self.pantilt_connected
     status_msg.has_position_feedback = self.has_position_feedback
-
-    status_msg.pantilt_device = nepi_ros.get_param(self,"~pt_namespace",self.init_pt_namespace)
-
-
+    status_msg.max_scan_time_sec = self.MAX_SCAN_TIME
+    status_msg.scan_time_sec = nepi_ros.get_param(self,"~scan_time",self.init_scan_time)
     status_msg.min_area_ratio = nepi_ros.get_param(self,"~min_area_ratio",self.init_min_area_ratio)
     status_msg.scan_speed_ratio = nepi_ros.get_param(self,"~scan_speed_ratio",self.init_scan_speed_ratio)
     status_msg.scan_tilt_offset = nepi_ros.get_param(self,"~scan_tilt_offset",self.init_scan_tilt_offset)
@@ -275,106 +335,91 @@ class pantilt_object_tracker(object):
     status_msg.track_speed_ratio = nepi_ros.get_param(self,"~track_speed_ratio",self.init_track_speed_ratio)
     status_msg.track_tilt_offset = nepi_ros.get_param(self,"~track_tilt_offset", self.init_track_tilt_offset)
 
+    status_msg.is_scanning = self.is_scanning
+    status_msg.is_tracking = self.is_tracking
+
+    status_msg.xy_errors_deg = self.xy_errors_deg
+
+
     self.status_pub.publish(status_msg)
 
-
+  def scanTimeCb(self,timer):
+    current_dir = self.timed_scan_dir
+    self.timed_scan_dir = -1 * current_dir
+    scan_time = nepi_ros.get_param(self,"~scan_time",self.init_scan_time)
+    if self.has_position_feedback == False & self.is_scanning == True:
+      pan_jog_msg = SingleAxisTimedMove()
+      pan_jog_msg.direction = self.timed_scan_dir
+      pan_jog_msg.duration_s = scan_time
+      self.set_pt_pan_ratio_pub.publish(pan_jog_msg)
 
   def updaterCb(self,timer):
     update_status = False
-    current_timestamp = nepi_ros.get_rostime()
-    # Update Classifier Info
-    try:
-      ai_mgr_status_response = self.get_ai_mgr_status_service()
-      #nepi_msg.publishMsgInfo(self," Got classifier status  " + str(ai_mgr_status_response))
-    except Exception as e:
-      nepi_msg.publishMsgWarn(self,"Failed to call AI MGR STATUS service" + str(e))
-      return
-    #status_str = str(ai_mgr_status_response)
-    #nepi_msg.publishMsgWarn(self," got ai manager status: " + status_str)
-    self.current_image_topic = ai_mgr_status_response.selected_img_topic
-    self.current_classifier = ai_mgr_status_response.selected_classifier
-    self.current_classifier_state = ai_mgr_status_response.classifier_state
-    self.classifier_running = self.current_classifier_state == "Running"
-    classes_list = ai_mgr_status_response.selected_classifier_classes
-    if classes_list != self.classes_list:
-      self.classes_list = classes_list
-      if len(self.classes_list) > 0:
-        cmap = plt.get_cmap('viridis')
-        color_list = cmap(np.linspace(0, 1, len(self.classes_list))).tolist()
-        rgb_list = []
-        for color in color_list:
-          rgb = []
-          for i in range(3):
-            rgb.append(int(color[i]*255))
-          rgb_list.append(rgb)
-        self.class_color_list = rgb_list
-        #nepi_msg.publishMsgWarn(self,self.class_color_list)
-      #classes_str = str(self.classes_list)
-      #nepi_msg.publishMsgWarn(self," got ai manager status: " + classes_str)
-      update_status = True
-  
-    last_classifier = self.last_classifier
-    if last_classifier != self.current_classifier and self.current_classifier != "None":
-      update_status = True
-    self.last_classifier = self.current_classifier
-    self.last_image_topic = self.current_image_topic
-    #nepi_msg.publishMsgWarn(self," Got image topics last and current: " + self.last_image_topic + " " + self.current_image_topic)
-    if self.classifier_running:
-      self.classifier_connected = True
-    else:
-      self.classifier_connected = False
-      ### Setup PT interface if needed
-
-
-    current_pt_device = nepi_ros.set_param(self,"~pt_namespace",self.init_pt_namespace)
-    if self.last_pt_device != current_pt_device:
-      if self.pantilt_connected == True:
-        self.send_pt_home_pub.unregister()
-        self.set_pt_speed_ratio_pub.unregister()
-        self.set_pt_pan_ratio_pub.unregister()
-        self.set_pt_tilt_ratio_pub.unregister()
-        self.set_pt_soft_limits_pub.unregister()
-        self.pt_stop_motion_pub.unregister()
-        if self.pt_sub != None:
-          self.pt_sub.unregister()
-          time.sleep(1)
-          self.pt_sub = None
-        time.sleep(1)
-      pt_status_topic = os.path.join(current_pt_device,"/ptx/pt_status_msg")
-      nepi_msg.publishMsgInfo(self,"Looking for PT device status msg on topic: " + pt_status_topic)
-      pt_topic=nepi_ros.find_topic(pt_pt_status_msg_topic)
-      if pt_topic == "":
-        nepi_msg.publishMsgWarn(self,"No PT device status found on topic: " + pt_status_topic)
-      else:
-        PTX_NAMESPACE = (pt_topic.rpartition("ptx")[0] + "ptx/")
-        nepi_msg.publishMsgInfo(self,"Found ptx namespace: " + PTX_NAMESPACE)
-        # PanTilt Status Topics
-        PTX_GET_STATUS_TOPIC = PTX_NAMESPACE + "pt_status_msg"
-        # PanTilt Control Publish Topics
-        PTX_SET_SPEED_RATIO_TOPIC = PTX_NAMESPACE + "set_speed_ratio"
-        PTX_GOHOME_TOPIC = PTX_NAMESPACE + "go_home"
-        PTX_STOP_TOPIC = PTX_NAMESPACE + "stop_moving"
-        PTX_GOTO_PAN_RATIO_TOPIC = PTX_NAMESPACE + "jog_to_yaw_ratio"
-        PTX_GOTO_TILT_RATIO_TOPIC = PTX_NAMESPACE + "jog_to_pitch_ratio"
-        PTX_SET_SOFT_LIMITS_TOPIC = PTX_NAMESPACE + "set_soft_limits"
-
-        ## Create Class Publishers
-        self.send_pt_home_pub = rospy.Publisher(PTX_GOHOME_TOPIC, Empty, queue_size=10)
-        self.set_pt_speed_ratio_pub = rospy.Publisher(PTX_SET_SPEED_RATIO_TOPIC, Float32, queue_size=10)
-        self.set_pt_pan_ratio_pub = rospy.Publisher(PTX_GOTO_PAN_RATIO_TOPIC, Float32, queue_size=10)
-        self.set_pt_tilt_ratio_pub = rospy.Publisher(PTX_GOTO_TILT_RATIO_TOPIC, Float32, queue_size=10)
-        self.set_pt_soft_limits_pub = rospy.Publisher(PTX_SET_SOFT_LIMITS_TOPIC, PanTiltLimits, queue_size=10)
-        self.pt_stop_motion_pub = rospy.Publisher(PTX_STOP_TOPIC, Empty, queue_size=10)
-
-        # Start PT Status Callback
-        nepi_msg.publishMsgInfo("Starting Pan Tilt Stutus callback")
-        self.pt_sub = rospy.Subscriber(PTX_GET_STATUS_TOPIC, PanTiltStatus, self.pt_status_msg_callback)  
-
-        self.pantilt_connected = True
+    if targeting_status_msg is not None:
+      self.targeting_running = True
+      #status_str = str(targeting_status_msg)
+      #nepi_msg.publishMsgWarn(self," got ai manager status: " + status_str)
+      self.current_image_topic = targeting_status_msg.image_topic
+      self.classifier_running = targeting_status_msg.classifier_running
+      classes_list = targeting_status_msg.selected_classifier_classes
+      if classes_list != self.classes_list:
+        self.classes_list = classes_list
+        if len(self.classes_list) > 0:
+          cmap = plt.get_cmap('viridis')
+          color_list = cmap(np.linspace(0, 1, len(self.classes_list))).tolist()
+          rgb_list = []
+          for color in color_list:
+            rgb = []
+            for i in range(3):
+              rgb.append(int(color[i]*255))
+            rgb_list.append(rgb)
+          self.class_color_list = rgb_list
+          #nepi_msg.publishMsgWarn(self,self.class_color_list)
+        #classes_str = str(self.classes_list)
+        #nepi_msg.publishMsgWarn(self," got ai manager status: " + classes_str)
         update_status = True
-    self.last_pt_device = current_pt_device
-
-
+    
+      #nepi_msg.publishMsgWarn(self," Got image topics last and current: " + self.last_image_topic + " " + self.current_image_topic)
+      if self.classifier_running:
+        use_live_image = nepi_ros.get_param(self,'~use_live_image',self.init_use_live_image)
+        if (self.last_image_topic != self.current_image_topic) or (self.image_sub == None and self.current_image_topic != "None") or self.reset_image_topic == True:
+          self.reset_image_topic = False
+          image_topic = ""
+          if use_live_image:
+            image_topic = nepi_ros.find_topic(self.current_image_topic)
+          if image_topic == "":
+            source_topic = AI_MGR_STATUS_SERVICE_NAME = self.ai_mgr_namespace  + "/source_image"
+            image_topic = nepi_ros.find_topic(source_topic)
+          nepi_msg.publishMsgInfo(self," Got detect image update topic update : " + image_topic)
+          update_status = True
+          if image_topic != "":
+            if self.image_sub != None:
+              nepi_msg.publishMsgWarn(self," Unsubscribing to Image topic : " + image_topic)
+              self.image_sub.unregister()
+              time.sleep(1)
+              self.image_sub = None
+            nepi_msg.publishMsgInfo(self," Subscribing to Image topic : " + image_topic)
+            self.image_sub = rospy.Subscriber(image_topic, Image, self.alertsImageCb, queue_size = 1)
+            time.sleep(1)
+            if self.image_pub is None:
+              #nepi_msg.publishMsgWarn(self," Creating Image publisher ")
+              self.image_pub = rospy.Publisher("~image",Image,queue_size=1)
+              time.sleep(1)
+            self.alerts_running = True
+            update_status = True
+      elif self.classifier_running == False or self.current_image_topic == "None" or self.current_image_topic == "":  # Turn off alerts subscribers and reset last image topic
+        if self.image_sub != None:
+          nepi_msg.publishMsgWarn(self," Unsubscribing to Image topic : " + self.current_image_topic)
+          self.image_sub.unregister()
+          self.image_sub = None
+        update_status = True
+        time.sleep(1)
+      # Publish warning image if not running
+      if self.classifier_running == False or self.image_sub == None:
+        self.ros_message_img.header.stamp = nepi_ros.time_now()
+        self.image_pub.publish(self.ros_message_img)
+      # Save last image topic for next check
+      self.last_image_topic = self.current_image_topic
     if update_status == True:
       self.publish_status()
 
@@ -382,23 +427,36 @@ class pantilt_object_tracker(object):
   ### Node Callbacks
 
 
-  def startTrackerCb(self,msg):
-    sefl.startTracker()
+  def enableTrackerCb(self,msg):
+    current_enable = nepi_ros.get_param(self,"~tracking_enabled",self.init_tracking_enabled)
+    enable = msg.data
+    if current_enable != enable:
+      nepi_ros.set_param(self,"~tracking_enabled",enable)
     self.publish_status()
 
-  def startTracker(self):
-    if self.classifier_connected and self.pantilt_connected:
-      self.is_running = True
-      nepi_ros.set_param(self,'~running',  True)
-   
-  def stopTrackerCb(self,msg):
-    sefl.stopTracker()
+
+  def setImageLiveCb(self,msg):
+    ##nepi_msg.publishMsgInfo(self,msg)
+    live = msg.data
+    current_live = nepi_ros.get_param(self,'~use_live_image',self.init_use_live_image)
+    if live != current_live:
+      nepi_ros.set_param(self,'~use_live_image',live)
+      self.reset_image_topic = True # Will force resubscribe later
     self.publish_status()
 
-  def startTracker(self):
-    self.is_running = False
-    nepi_ros.set_param(self,'~running',  False)
+  def setImageLastCb(self,msg):
+    ##nepi_msg.publishMsgInfo(self,msg)
+    use_last = msg.data
+    nepi_ros.set_param(self,'~use_last_image',use_last)
+    self.publish_status()
 
+
+  def setClassCb(self,msg):
+    ##nepi_msg.publishMsgInfo(self,msg)
+    selected_class = msg.data
+    if selected_class in self.classes_list:
+      nepi_ros.set_param(self,'~selected_class',  selected_class)
+    self.publish_status()
 
   def setPtTopicCb(self,msg):
     ##nepi_msg.publishMsgInfo(self,msg)
@@ -406,11 +464,12 @@ class pantilt_object_tracker(object):
     nepi_ros.set_param(self,'~pt_namespace',  pt_topic)
     self.publish_status()
 
-  def setTargetClassCb(self,msg):
+
+  def setScanTimeCb(self,msg):
     ##nepi_msg.publishMsgInfo(self,msg)
-    target_class = msg.data
-    if target_class in self.current_classifier_classes:
-      nepi_ros.set_param(self,'~target_class',  fov)
+    val = msg.data
+    if val > 0 and val <= MAX_SCAN_TIME:
+      nepi_ros.set_param(self,'~scan_time',  val)
     self.publish_status()
 
   def setMinAreaCb(self,msg):
@@ -461,35 +520,32 @@ class pantilt_object_tracker(object):
   ### PT Callbacks
 
   ### Simple callback to get pt pt_status_msg info
-  def pt_status_msg_callback(self,PanTiltStatus):
+  def pt_status_msg_callback(self,pt_status_msg):
     # This is just to get the current pt positions
-    self.pt_status_msg = PanTiltStatus
-    self.total_tilt_degs = self.pt_status_msg.pitch_max_softstop_deg - self.pt_status_msg.pitch_min_softstop_deg
-    tilt_ratio = 0.5 + self.pt_status_msg.pitch_now_deg / (self.total_tilt_degs)
-    if self.pt_status_msg.reverse_pitch_control:
-      self.current_tilt_ratio = 1 - tilt_ratio
-    self.total_pan_degs = self.pt_status_msg.yaw_max_softstop_deg - self.pt_status_msg.yaw_min_softstop_deg
-    pan_ratio = 0.5 + self.pt_status_msg.yaw_now_deg / (self.total_pan_degs)
-    if self.pt_status_msg.reverse_yaw_control:
-      self.current_pan_ratio = 1 - pan_ratio
+    self.pt_status_msg = pt_status_msg
+    self.has_position_feedback = pt_status_msg.has_position_feedback
     
   ### Setup a regular background scan process based on timer callback
   def pt_scan_timer_callback(self,timer):
-    if self.is_running == True:
-      target_class = nepi_ros.get_param(self,"~target_class",self.init_target_class)
-      min_area_ratio =  nepi_ros.get_param(self,"~min_area_ratio",self.init_min_area_ratio)
+    tracking_enabled = nepi_ros.get_param(self,"~tracking_enabled",self.init_tracking_enabled)
+    if tracking_enabled == True:
       scan_speed_ratio = nepi_ros.get_param(self,"~scan_speed_ratio",self.init_scan_speed_ratio)
       scan_tilt_offset = nepi_ros.get_param(self,"~scan_tilt_offset",self.init_scan_tilt_offset)
       scan_pan_angle = nepi_ros.get_param(self,"~scan_pan_angle",self.init_scan_pan_angle)
-      track_speed_ratio = nepi_ros.get_param(self,"~track_speed_ratio",self.init_track_speed_ratio)
-      track_tilt_offset = nepi_ros.get_param(self,"~track_tilt_offset", self.init_track_tilt_offset)
+      if self.target_detected == False: # if not tracking, return to scan mode
+        self.is_scanning = True
+        self.is_tracking = False
+        if self.has_position_feedback = True:
+          
+
+        else:
+
+
 
       pan_scan_limit = scan_pan_angle / float(2)
 
       # Called periodically no matter what as a Timer object callback
-      if not self.target_detected: # if not tracking, return to scan mode
-        self.is_scanning = True
-        self.is_tracking = False
+
         #nepi_msg.publishMsgInfo("No Targets Found, Entering Scan Mode")
         if self.pt_status_msg.yaw_now_deg > pan_scan_limit:
           nepi_msg.publishMsgInfo("Soft Pan Limit Reached, Reversing Scan Direction")
@@ -520,8 +576,10 @@ class pantilt_object_tracker(object):
 
   # Action upon detection of object of interest
   def targetLocsCb(self,target_locs_msg):
-    if self.is_running == True:
-      target_class = nepi_ros.get_param(self,"~target_class",self.init_target_class)
+    self.target_locs_msg = target_locs_msg
+    tracking_enabled = nepi_ros.get_param(self,"~tracking_enabled",self.init_tracking_enabled)
+    if tracking_enabled == True:
+      selected_class = nepi_ros.get_param(self,"~selected_class",self.init_sel_class)
       min_area_ratio =  nepi_ros.get_param(self,"~min_area_ratio",self.init_min_area_ratio)
       scan_speed_ratio = nepi_ros.get_param(self,"~scan_speed_ratio",self.init_scan_speed_ratio)
       scan_tilt_offset = nepi_ros.get_param(self,"~scan_tilt_offset",self.init_scan_tilt_offset)
@@ -535,7 +593,7 @@ class pantilt_object_tracker(object):
       largest_box_area_ratio=0 # Initialize largest box area
       for target_loc in target_locs_msg.target_localizations:
         # Check for the object of interest and take appropriate actions
-        if target_loc.Class == target_class:
+        if target_loc.Class == selected_class:
           # Check if largest box
           box_area_ratio = target_loc.area_ratio
           if box_area_ratio > largest_box_area_ratio:
@@ -560,15 +618,19 @@ class pantilt_object_tracker(object):
         # Object of interest not detected, so reset target_detected
         self.target_detected=False  # will start scan mode on next timer event
     
-    def foundTargetCb(self,found_obj_msg):
-      # Must reset target_detected in the event of no objects to restart scan mode
-      if found_obj_msg.count == 0:
-        #nepi_msg.publishMsgInfo("No objects found")
-        self.target_detected=False
+  def targetingStatusCb(self,targeting_status_msg)
+    self.targeting_status_msg = targeting_status_msg
+
+
+  def foundTargetCb(self,found_obj_msg):
+    # Must reset target_detected in the event of no objects to restart scan mode
+    if found_obj_msg.count == 0:
+      #nepi_msg.publishMsgInfo("No objects found")
+      self.target_detected=False
 
   ### Track box process based on current box center relative ratio of image
   def pt_track_box(self,object_error_x_ratio, object_error_y_ratio):
-    target_class = nepi_ros.get_param(self,"~target_class",self.init_target_class)
+    selected_class = nepi_ros.get_param(self,"~selected_class",self.init_sel_class)
     min_area_ratio =  nepi_ros.get_param(self,"~min_area_ratio",self.init_min_area_ratio)
     scan_speed_ratio = nepi_ros.get_param(self,"~scan_speed_ratio",self.init_scan_speed_ratio)
     scan_tilt_offset = nepi_ros.get_param(self,"~scan_tilt_offset",self.init_scan_tilt_offset)
