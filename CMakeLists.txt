@@ -59,7 +59,9 @@ nepi_ros_interfaces
 
 ## Generate messages in the 'msg' folder
  add_message_files(FILES
+    TrackingErrors.msg
     AiPtTrackerStatus.msg
+
  )
 
 ## Generate services in the 'srv' folder
