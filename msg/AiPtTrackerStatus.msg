@@ -1,19 +1,18 @@
-
-bool tracking_enabled
+bool app_enabled
+string app_msg
 
 bool classifier_running
-bool targeting_running
 
 string image_topic
-bool use_live_image
-bool use_last_image
+float32 image_fov_vert_degs 
+float32 image_fov_horz_degs 
 
 string[] available_classes_list
 string selected_class
 bool target_detected
 
 string pantilt_device
-string pantilt_connected
+bool pantilt_connected
 bool has_position_feedback
 float32[] tilt_min_max_deg
 float32[] pan_min_max_deg

@@ -25,7 +25,7 @@ import AiDetectorMgr from "./NepiMgrAiDetector"
 import CameraViewer from "./CameraViewer"
 import NepiIFSaveData from "./Nepi_IF_SaveData"
 
-import {createShortUniqueValues, onDropdownSelectedSendStr, createMenuListFromStrList, createShortValuesFromNamespaces, onUpdateSetStateValue, onEnterSendFloatValue} from "./Utilities"
+import {createShortUniqueValues, onDropdownSelectedSendStr, createMenuListFromStrList, createShortValuesFromNamespaces, onChangeSwitchStateValue, onUpdateSetStateValue, onEnterSendFloatValue} from "./Utilities"
 
 function round(value, decimals = 0) {
   return Number(value).toFixed(decimals)
@@ -45,14 +45,19 @@ class AiPtTrackerApp extends Component {
 	    appNamespace: null,
       baseNamespace: null,
 
-      tracking_enabled: false,
+      app_enabled: false,
+      app_msg: "Connecting",
+
+      image_name: "tracking_image",
+      show_detector_box: false,
 
       classifier_running: false,
-      targeting_running: false,
+
 
       image_topic: "None",
-      use_live_image: false,
-      use_last_image: false,
+      image_fov_vert_degs: null,
+      image_fov_horz_degs: null,
+
             
       available_classes_list: [],
       selected_class: "None",
@@ -61,27 +66,27 @@ class AiPtTrackerApp extends Component {
       selected_pantilt: "None",
       pantilt_connected: false,
       has_position_feedback: false,
-      tilt_min_max_deg: [-10,10],
-      pan_min_max_deg: [-10,10],
-      max_scan_time_sec: 10,
-      scan_time_sec: 5,
+      tilt_min_max_deg: [-20,20],
+      pan_min_max_deg: [-180,180],
+      max_scan_time_sec: null,
+      scan_time_sec: null,
 
-      min_area_ratio: 0,
-      scan_speed_ratio: 0,
-      scan_tilt_offset: 0,
-      scan_pan_angle: 0,
-      track_speed_ratio: 0,
-      track_tilt_offset: 0,
+      min_area_ratio: null,
+      scan_speed_ratio: null,
+      scan_tilt_offset: null,
+      scan_pan_angle: null,
+      track_speed_ratio: null,
+      track_tilt_offset: null,
       
-      error_goal_min_max_deg: [1,10],
-      error_goal_deg: 5,
+      error_goal_min_max_deg: [1,20],
+      error_goal_deg: null,
 
-      is_running: false,
       is_scanning: false,
       is_tracking: false,
 
       statusListener: null,
       statusErrorListener: null,
+      ptListener: null,
       connected: false,
       needs_update: true,
 
@@ -119,14 +124,14 @@ class AiPtTrackerApp extends Component {
   statusListener(message) {
     this.setState({
 
-      tracking_enabled: message.tracking_enabled,
+      app_enabled: message.app_enabled,
+      app_msg: message.app_msg,
 
       classifier_running: message.classifier_running,
-      targeting_running: message.targeting_running,
             
       image_topic: message.image_topic,
-      use_live_image: message.use_live_image,
-      use_last_image: message.use_last_image,
+      image_fov_vert_degs: message.image_fov_vert_degs,
+      image_fov_horz_degs: message.image_fov_horz_degs,      
 
       available_classes_list: message.available_classes_list,
       selected_class: message.selected_class,
@@ -172,10 +177,6 @@ class AiPtTrackerApp extends Component {
     
   })
 
-  this.setState({
-      connected: true
-  })
-
 
 }
     // Function for configuring and subscribing to Status
@@ -198,13 +199,13 @@ class AiPtTrackerApp extends Component {
 
     updateStatusErrorListener() {
       const namespace = this.getAppNamespace()
-      const statusNamespace = namespace + '/status'
+      const statusNamespace = namespace + '/errors'
       if (this.state.statusErrorListener) {
         this.state.statusErrorListener.unsubscribe()
       }
       var statusErrorListener = this.props.ros.setupStatusListener(
             statusNamespace,
-            "nepi_app_ai_pt_tracker/TrackeringErrors",
+            "nepi_app_ai_pt_tracker/TrackingErrors",
             this.statusErrorListener
           )
       this.setState({ 
@@ -240,163 +241,264 @@ class AiPtTrackerApp extends Component {
     }
   }
 
- // Function for configuring and subscribing to ptx/status
- onPTXUnitSelected(event) {
-  if (this.state.listener) {
-    this.state.listener.unsubscribe()
-  }
-
-  var idx = event.nativeEvent.target.selectedIndex
-  //var text = event.nativeEvent.target[idx].text
-  var value = event.target.value
-
-  // Handle the "None" option -- always index 0
-  if (idx === 0) {
-    this.setState({ disabled: true })
-    return
-  }
-
-  this.setState({ ptxNamespace: value })
-
-  var listener = this.props.ros.setupPTXStatusListener(
-      value,
-      this.ptxStatusListener
-    )
-    
-  this.setState({ ptxNamespace: value, listener: listener, disabled: false })
-}
 
 
 // Function for creating topic options for Select input
-createPTXOptions(caps_dictionaries, filter) {
-  const topics = Object.keys(caps_dictionaries)
+createPTXOptions() {
+  const { ptxUnits} = this.props.ros
+  const topics = Object.keys(ptxUnits)
   var filteredTopics = topics
+  const sel_pt = this.state.selected_pantilt
   var i
-  if (filter) {
-    filteredTopics = []
-    for (i = 0; i < topics.length; i++) {
-      // includes does a substring search
-      if (topics[i].includes(filter)) {
-        filteredTopics.push(topics[i])
-      }
-    }
-  }
-
   var items = []
-  items.push(<Option>{""}</Option>)
-  var unique_names = createShortUniqueValues(filteredTopics)
-  for (i = 0; i < filteredTopics.length; i++) {
-    items.push(<Option value={filteredTopics[i]}>{unique_names[i]}</Option>)
+  items.push(<Option>{"None"}</Option>)
+  var unique_names = createShortUniqueValues(topics)
+  for (i = 0; i < topics.length; i++) {
+    items.push(<Option value={topics[i]}>{unique_names[i]}</Option>)
   }
-
   return items
 }
 
 
-  renderAppControls() {
-    const {sendTriggerMsg, sendStringMsg, sendBoolMsg, ptxUnits} = this.props.ros
-    const appNamespace = this.state.appNamespace
-    const NoneOption = <Option>None</Option>
-    const is_running = this.state.is_running
-    const pt_connected = this.state.pt_connected
-    const classifier_connected = this.state.classifier_connected
-    const can_start = (pt_connected && classifier_connected && is_running === false)
-    const pan_tilt_option = this.createPTXOptions(ptxUnits)
 
-    return (
-      <div>
+
+renderApp() {
+  const {sendTriggerMsg, sendStringMsg, sendBoolMsg, ptxUnits} = this.props.ros
+  const pan_tilt_options = this.createPTXOptions()
+  const pt_connected = this.state.pt_connected
+  const sel_pt = this.state.selected_pantilt
+  const NoneOption = <Option>None</Option>
+  const classifier_running = this.state.classifier_running
+  const selectedClass = this.state.selected_class
+  const class_sel = selectedClass !== null && selectedClass !== 'None'
+  const connected = this.state.connected === true
+  const appNamespace = this.getAppNamespace()
+
+
+  return (
+    <Section title={"AI PT Tracking App"}>
 
       <Columns>
       <Column>
 
-      <Label title={"Tracker Running"}>
-      <BooleanIndicator value={is_running} />
-    </Label>
 
-      <Label title="Enable Tracking">
-              <Toggle
-              checked={this.state.tracking_enabled===true}
-              onClick={() => sendBoolMsg(appNamespace + "/tracking_enabled",!this.state.tracking_enabled)}>
-              </Toggle>
+      <Columns>
+        <Column>
+
+        <Label title="Enable App">
+            <Toggle
+            checked={this.state.app_enabled===true}
+            onClick={() => sendBoolMsg(appNamespace + "/enable_app",!this.state.app_enabled)}>
+            </Toggle>
       </Label>
 
+
+          </Column>
+        <Column>
+
+
+        </Column>
+      </Columns>
+
+
+
+      <pre style={{ height: "40px", overflowY: "auto" ,fontWeight: 'bold' , color: Styles.vars.colors.Green, textAlign: "left" }}>
+          {this.state.app_msg}
+        </pre>
+
+        <Columns>
+          <Column>
 
 
       <Label title={"Classifier Running"}>
         <BooleanIndicator value={this.state.classifier_running} />
       </Label>
 
-      <Label title={"Targeting Running"}>
-        <BooleanIndicator value={this.state.targeting_running} />
+
+      <Label title={"Pantilt Connected"}>
+        <BooleanIndicator value={pt_connected} />
+      </Label>
+
+      <Label title={"Target Class Selected"}>
+        <BooleanIndicator value={class_sel} />
+      </Label>
+
+            </Column>
+          <Column>
+
+        <Label title={"Scanning"}>
+        <BooleanIndicator value={this.state.is_scanning} />
+      </Label>
+
+      <Label title={"Tracking"}>
+        <BooleanIndicator value={this.state.is_tracking} />
+      </Label>
+
+      <Label title={"Target Detected"}>
+        <BooleanIndicator value={this.state.target_detected} />
       </Label>
 
 
 
-      <Label title={"Classifier Name"}>
-        <Input disabled value={this.state.classifier_name} />
+          <Label title={"Pitch Deg Error"}>
+        <Input disabled value={this.state.pitch_deg} />
       </Label>
 
-      <Label title={"State"}>
-        <Input disabled value={this.state.classifier_state} />
-      </Label>
 
-      <Label title={"Connected"}>
-        <Input disabled value={this.state.classifier_connected} />
-      </Label>
 
-      <Label title={"Image Topic"}>
-        <Input disabled value={this.state.image_topic} />
-      </Label>
+          <Label title={"Yaw Deg Error"}>
+        <Input disabled value={this.state.yaw_deg} />
+      </Label> 
+  
+          </Column>
+        </Columns>
 
-      <Label title="use Live Image">
-              <Toggle
-              checked={this.state.use_live_image===true}
-              onClick={() => sendBoolMsg(appNamespace + "/use_live_image",!this.state.use_live_image)}>
-              </Toggle>
-      </Label>
 
-      <Label title="use_last_image">
-              <Toggle
-              checked={this.state.use_last_image===true}
-              onClick={() => sendBoolMsg(appNamespace + "/use_last_image",!this.state.use_last_image)}>
-              </Toggle>
-      </Label>
 
-      </Column>
-      <Column>
 
-      <Label title={"Pan/Tilt Unit"}>
-              <Select
-                onChange={this.onPTXUnitSelected}
-                value={this.state.selected_pantilt}
-              >
-                {this.createPTXOptions(ptxUnits)}
-              </Select>
-            </Label>
+
+
+
+
+
+
+
+
+
+      <div hidden={!this.state.classifier_running || !this.state.app_enabled}>
+     
 
       <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
-      <pre style={{ height: "10px", overflowY: "auto" }}>
-                {"Scan Options"}
-              </pre>
-              <Label title={"Has Position Feedback"}>
+
+      <label style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}>
+        {"App Settings"}
+       </label>
+
+
+       <Columns>
+          <Column>
+
+          <Label title={"Select PanTilt Device"}>
+          <Select
+            id="pt_select"
+            onChange={(event) => onDropdownSelectedSendStr.bind(this)(event, appNamespace + "/select_pantilt")}
+            value={this.state.selected_pantilt}
+          >
+            {(pan_tilt_options.length > 1)
+              ? pan_tilt_options
+              : NoneOption}
+          </Select>
+      </Label>
+
+      <Label title={"Has Position Feedback"}>
         <BooleanIndicator value={this.state.has_position_feedback} />
       </Label>
 
-      <div hidden={this.state.has_position_feedback}>
-      <Label title={"Scan Speed Ratio"}>
-        <Input
-          value={this.state.home_lat}
-            id="scan_speed_ratio"
-            onChange= {(event) => onUpdateSetStateValue.bind(this)(event,"scan_speed_ratio")}
-            onKeyDown= {(event) => onEnterSendFloatValue.bind(this)(event, this.state.appNamespace +"/set_scan_speed_ratio")}
-            style={{ width: "80%" }}
-        />
+
+      <SliderAdjustment
+          title={"Target Size Filter"}
+          msgType={"std_msgs/float32"}
+          adjustment={this.state.min_area_ratio}
+          topic={appNamespace + "/set_min_area_ratio"}
+          scaled={0.01}
+          min={0}
+          max={100}
+          tooltip={""}
+          unit={"%"}
+      />
+
+            </Column>
+          <Column>
+
+          <Label title={"Select Target Class"}>
+          <Select
+            id="class_select"
+            onChange={(event) => onDropdownSelectedSendStr.bind(this)(event, appNamespace + "/select_class")}
+            value={this.state.selected_class}
+          >
+            {this.state.available_classes_list
+              ? createMenuListFromStrList(this.state.available_classes_list, false, [],['None'],[])
+              : NoneOption}
+          </Select>
       </Label>
+
+      <div hidden={this.state.has_position_feedback === false}>
+
+      <SliderAdjustment
+          title={"Set Error Goal (Degs)"}
+          msgType={"std_msgs/float32"}
+          adjustment={this.state.error_goal_deg}
+          topic={appNamespace + "/set_error_goal_degs"}
+          scaled={1.0}
+          min={this.state.error_goal_min_max_deg[0]}
+          max={this.state.error_goal_min_max_deg[1]}
+          tooltip={""}
+          unit={"Degs"}
+      />
+
       </div>
+  
+          </Column>
+        </Columns>
+
+
+
+    <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
+
+
+
+    <Columns>
+          <Column>
+
+          <Label title={"Sensor Vertical Degrees"}>
+          <Input id="image_fov_vert_degs" 
+            value={this.state.image_fov_vert_degs} 
+            onChange={(event) => onUpdateSetStateValue.bind(this)(event,"image_fov_vert_degs")} 
+            onKeyDown= {(event) => onEnterSendFloatValue.bind(this)(event,appNamespace + "/set_image_fov_vert")} />
+        </Label>
+
+            </Column>
+          <Column>
+
+          <Label title={"Sensor Horzontal Degrees"}>
+          <Input id="image_fov_horz_degs" 
+            value={this.state.image_fov_horz_degs} 
+            onChange={(event) => onUpdateSetStateValue.bind(this)(event,"image_fov_vert_degs")} 
+            onKeyDown= {(event) => onEnterSendFloatValue.bind(this)(event,appNamespace + "/set_image_fov_horz")} />
+        </Label>
+
+          </Column>
+        </Columns>
+
+
+
+
+
+      <Columns>
+          <Column>
+          <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
+      <label style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}>
+          {"Scan Settings"}
+         </label>
+
+
+      <SliderAdjustment
+          title={"Scan Speed Ratio"}
+          msgType={"std_msgs/float32"}
+          adjustment={this.state.scan_speed_ratio}
+          topic={appNamespace + "/set_scan_speed_ratio"}
+          scaled={0.01}
+          min={0}
+          max={100}
+          tooltip={""}
+          unit={"%"}
+      />
+
+      <div hidden={this.state.has_position_feedback === false}>
 
       <Label title={"Scan Tilt Offset"}>
         <Input
-          value={this.state.home_lat}
+          value={this.state.scan_tilt_offset}
             id="scan_tilt_offset"
             onChange= {(event) => onUpdateSetStateValue.bind(this)(event,"scan_tilt_offset")}
             onKeyDown= {(event) => onEnterSendFloatValue.bind(this)(event, this.state.appNamespace +"/set_scan_tilt_offset")}
@@ -406,7 +508,7 @@ createPTXOptions(caps_dictionaries, filter) {
 
       <Label title={"Scan Pan Angle"}>
         <Input
-          value={this.state.home_lat}
+          value={this.state.scan_pan_angle}
             id="scan_pan_angle"
             onChange= {(event) => onUpdateSetStateValue.bind(this)(event,"scan_pan_angle")}
             onKeyDown= {(event) => onEnterSendFloatValue.bind(this)(event, this.state.appNamespace +"/set_scan_pan_angle")}
@@ -414,25 +516,36 @@ createPTXOptions(caps_dictionaries, filter) {
         />
       </Label>
 
-      <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
-      <pre style={{ height: "10px", overflowY: "auto" }}>
-                {"Track Options"}
-              </pre>
+      </div>
 
 
-              <Label title={"Track Speed Ratio"}>
-        <Input
-          value={this.state.home_lat}
-            id="track_speed_ratio"
-            onChange= {(event) => onUpdateSetStateValue.bind(this)(event,"track_speed_ratio")}
-            onKeyDown= {(event) => onEnterSendFloatValue.bind(this)(event, this.state.appNamespace +"/set_track_speed_ratio")}
-            style={{ width: "80%" }}
-        />
-      </Label>
+            </Column>
+          <Column>
 
+
+          <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
+      <label style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}>
+          {"Track Settings"}
+         </label>
+
+      <SliderAdjustment
+          title={"Track Speed Ratio"}
+          msgType={"std_msgs/float32"}
+          adjustment={this.state.track_speed_ratio}
+          topic={appNamespace + "/set_track_speed_ratio"}
+          scaled={0.01}
+          min={0}
+          max={100}
+          tooltip={""}
+          unit={"%"}
+      />
+
+
+
+      <div hidden={this.state.has_position_feedback === false}>
       <Label title={"Track Tilt Offset"}>
         <Input
-          value={this.state.home_lat}
+          value={this.state.track_tilt_offset}
             id="track_tilt_offset"
             onChange= {(event) => onUpdateSetStateValue.bind(this)(event,"track_tilt_offset")}
             onKeyDown= {(event) => onEnterSendFloatValue.bind(this)(event, this.state.appNamespace +"/set_track_tilt_offset")}
@@ -440,172 +553,123 @@ createPTXOptions(caps_dictionaries, filter) {
         />
       </Label>
 
-      <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
-
-
-
-      </Column>
-      <Column>
-
-      <Label title={"Selected Class"}>
-          <Select
-            id="pt_selected_class"
-            onChange={(event) => onDropdownSelectedSendStr.bind(this)(event, appNamespace + "/selected_class")}
-            value={this.state.selected_class}
-          >
-            {this.state.available_classes_list
-              ? createMenuListFromStrList(this.state.available_classes_list, false, [],[],[])
-              : NoneOption}
-          </Select>
-      </Label>
-
-      <Label title={"Target Detected"}>
-        <BooleanIndicator value={this.state.target_detected} />
-      </Label>
-
-
-      <Label title={"Pantilt Device"}>
-        <Input disabled value={this.state.pantilt_device} />
-      </Label>
-
-      <Label title={"Pantilt Connected"}>
-        <BooleanIndicator value={this.state.pantilt_connected} />
-      </Label>
-
-
-      </Column>
-      </Columns>
       </div>
-    )
-  }
-
-
-renderAppControls2() {
-    const {sendTriggerMsg, sendStringMsg, sendBoolMsg} = this.props.ros
-    const appNamespace = this.state.appNamespace
-    const NoneOption = <Option>None</Option>
-    const is_running = this.state.is_running
-    const pt_connected = this.state.pt_connected
-    const classifier_connected = this.state.classifier_connected
-    const can_start = (pt_connected && classifier_connected && is_running === false)
-
-    return (
-      <div>
-
-      <Columns>
-      <Column>
-
-      <Label title={"Min Area Ratio"}>
-        <Input
-          value={this.state.home_lat}
-            id="min_area_ratio"
-            onChange= {(event) => onUpdateSetStateValue.bind(this)(event,"min_area_ratio")}
-            onKeyDown= {(event) => onEnterSendFloatValue.bind(this)(event, this.state.appNamespace +"/set_min_area_ratio")}
-            style={{ width: "80%" }}
-        />
-      </Label>
-
-     
-
-      </Column>
-      <Column>
-
-      <Label title={"Scanning"}>
-        <BooleanIndicator value={this.state.is_scanning} />
-      </Label>
-
-      <Label title={"Tracking"}>
-        <BooleanIndicator value={this.state.is_tracking} />
-      </Label>
-
-
-      <Label title={"Pitch Deg Error"}>
-        <Input disabled value={this.state.pitch_deg} />
-      </Label>
-
-      <Label title={"Yaw Deg Error"}>
-        <Input disabled value={this.state.yaw_deg} />
-      </Label>
-
-      </Column>
-      </Columns>
-      </div>
-
-    )
-  }
-
-
- renderApp() {
-    const {sendTriggerMsg} = this.props.ros
-    const appNamespace = this.state.appNamespace
-    const NoneOption = <Option>None</Option>
-    return (
-      <div>
-        <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
-
-
-
-        <Columns>
-          <Column>
-
-            <ButtonMenu>
-              <Button onClick={() => sendTriggerMsg( appNamespace + "/reset_app")}>{"Reset App"}</Button>
-            </ButtonMenu>
-
-              <ButtonMenu>
-                <Button onClick={() => sendTriggerMsg(appNamespace + "/save_config")}>{"Save Config"}</Button>
-          </ButtonMenu>
-
-          <ButtonMenu>
-                <Button onClick={() => sendTriggerMsg( appNamespace + "/reset_config")}>{"Reset Config"}</Button>
-          </ButtonMenu>
 
   
           </Column>
         </Columns>
 
-</div>
+
+    </div>
 
 
 
-    )
-  }
+
+
+    <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
+
+    <Columns>
+        <Column>
+
+          <ButtonMenu>
+            <Button onClick={() => sendTriggerMsg( appNamespace + "/reset_app")}>{"Reset App"}</Button>
+          </ButtonMenu>
+
+          </Column>
+        <Column>
+
+            <ButtonMenu>
+              <Button onClick={() => sendTriggerMsg(appNamespace + "/save_config")}>{"Save Config"}</Button>
+        </ButtonMenu>
+
+        </Column>
+        <Column>
+
+        <ButtonMenu>
+              <Button onClick={() => sendTriggerMsg( appNamespace + "/reset_config")}>{"Reset Config"}</Button>
+        </ButtonMenu>
+
+
+        </Column>
+      </Columns>
 
 
 
-  renderImageViewer(){
-    const connected = this.state.connected
-    const appNamespace = this.getAppNamespace()
-    const imageNamespace = (connected) ? appNamespace + "/tracking_image" : null 
+    </Column>
+      </Columns>
+
+    </Section>
+
+  
+  )
+}
+
+
+  render() {
+    const connected = this.state.connected === true
+    const appNamespace = (connected) ? this.getAppNamespace() : null
+    const show_detector_box = this.state.show_detector_box
+    const imageNamespace = appNamespace + '/' + this.state.image_name
+
     return (
+
+      <Columns>
+      <Column equalWidth={true}>
+
+       
 
       <CameraViewer
         imageTopic={imageNamespace}
-        title={this.state.imageText}
+        title={this.state.image_name}
         hideQualitySelector={false}
       />
 
-      )
-    }  
 
-  render() {
-    const namespace = this.getAppNamespace()
-    const appNamespace = (this.state.connected) ? namespace: null
-    return (
-
-    <Columns>
+      </Column>
       <Column>
 
-      {this.renderImageViewer()}
+
+      <Columns>
+      <Column>
+
+      <Label title="Show Detector Settings">
+              <Toggle
+              checked={(this.state.show_detector_box === true)}
+              onClick={() => onChangeSwitchStateValue.bind(this)("show_detector_box",this.state.show_detector_box)}>
+              </Toggle>
+        </Label>
+
+      </Column>
+      <Column>
+
+    </Column>
+    </Columns>
+
+
+
+      <div hidden={!show_detector_box}>
+
+      <AiDetectorMgr
+              title={"Nepi_Mgr_AI_Detector"}
+          />
+
+      </div>
+
 
       {this.renderApp()}
 
-      {this.renderAppControls()}
 
-      {this.renderAppControls2()}
+      <div hidden={!connected}>
+
+        <NepiIFSaveData
+          saveNamespace={appNamespace}
+          title={"Nepi_IF_SaveData"}
+        />
+
+      </div>
 
       </Column>
-    </Columns>
+      </Columns>
 
       )
     }  

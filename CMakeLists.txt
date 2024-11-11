@@ -17,6 +17,7 @@ project(nepi_app_ai_pt_tracker)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
 message_generation
+rospy
 std_msgs
 sensor_msgs
 geometry_msgs
@@ -218,9 +219,9 @@ set( NEPI_APP_PARAMS_FOLDER
   /opt/nepi/ros/share/nepi_apps
 )
 
-install(DIRECTORY params/
-  DESTINATION ${NEPI_APP_PARAMS_FOLDER} 
-)
+#install(DIRECTORY params/
+#  DESTINATION ${NEPI_APP_PARAMS_FOLDER} 
+#)
 
 ## Mark other files for installation (e.g. launch and bag files, etc.)
 set( NEPI_RUI_FOLDER 
