@@ -125,6 +125,10 @@ class AiPtTrackerApp extends Component {
     var appNamespace = null
     if (namespacePrefix !== null && deviceId !== null){
       appNamespace = "/" + namespacePrefix + "/" + deviceId + "/" + this.state.appName
+      if (this.state.connected === false){
+        const pub_status_topic = appNamespace + "/publish_status"
+        this.props.ros.sendTriggerMsg(pub_status_topic)
+      }
     }
     return appNamespace
   }
@@ -560,30 +564,36 @@ renderApp() {
                 </Columns>
 
 
-                <RangeAdjustmentAbs
-                  title={"Set Pan Min Max Angles"}
-                  min={set_pan_min}
-                  max={set_pan_max}
-                  min_limit_m={pan_min}
-                  max_limit_m={pan_max}
-                  topic={appNamespace + "/set_min_max_pan_ratios"}
-                  disabled={(connected !== true || this.state.app_enabled !== true)}
-                  tooltip={"Pan Min Max Angles"}
-                  unit={""}
-                />
+                <Label title={"Set Pan Min"}>
+                    <Input id="set_pan_min" 
+                      value={this.state.pan_min} 
+                      onChange={(event) => onUpdateSetStateValue.bind(this)(event,"pan_min")} 
+                      onKeyDown= {(event) => this.onEnterSendInputBoxRangeWindowValue(event,"/set_min_max_pan_angles","min")} />
+              </Label>
+            
+
+                  <Label title={"Set Pan Max"}>
+                    <Input id="set_pan_min" 
+                     value={this.state.pan_max} 
+                      onChange={(event) => onUpdateSetStateValue.bind(this)(event,"pan_max")} 
+                      onKeyDown= {(event) => this.onEnterSendInputBoxRangeWindowValue(event,"/set_min_max_pan_angles","max")} />                      
+                  </Label>  
 
 
-                <RangeAdjustmentAbs
-                  title={"Set Tilt Min Max Angles"}
-                  min={set_tilt_min}
-                  max={set_tilt_max}
-                  min_limit_m={tilt_min}
-                  max_limit_m={tilt_max}
-                  topic={appNamespace + "/set_min_max_tilt_ratios"}
-                  disabled={(connected !== true || this.state.app_enabled !== true)}
-                  tooltip={"Tilt Min Max Angles"}
-                  unit={""}
-                />
+                  <Label title={"Set Tilt Min"}>
+                    <Input id="set_tilt_min" 
+                      value={this.state.tilt_min} 
+                      onChange={(event) => onUpdateSetStateValue.bind(this)(event,"tilt_min")} 
+                      onKeyDown= {(event) => this.onEnterSendInputBoxRangeWindowValue(event,"/set_min_max_tilt_angles","min")} />
+              </Label>
+            
+
+                  <Label title={"Set Tilt Max"}>
+                    <Input id="set_tilt_min" 
+                     value={this.state.tilt_max} 
+                      onChange={(event) => onUpdateSetStateValue.bind(this)(event,"tilt_max")} 
+                      onKeyDown= {(event) => this.onEnterSendInputBoxRangeWindowValue(event,"/set_min_max_tilt_angles","max")} />                      
+                  </Label>  
 
               <Columns>
                 <Column>

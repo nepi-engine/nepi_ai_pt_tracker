@@ -215,6 +215,7 @@ class pantiltTargetTrackerApp(object):
     self.initParamServerValues(do_updates=False)
 
     # App Specific Subscribers
+    rospy.Subscriber('~publish_status', Empty, self.pubStatusCb, queue_size = 10)
     rospy.Subscriber('~enable_app', Bool, self.appEnableCb, queue_size = 10)
 
     rospy.Subscriber("~set_image_fov_vert", Float32, self.setVertFovCb, queue_size = 10)
@@ -454,7 +455,7 @@ class pantiltTargetTrackerApp(object):
     #nepi_ros.set_param(self,"~selected_class","person")
     ############## DEBUG
 
-    update_status = True
+    update_status = False
     app_enabled = nepi_ros.get_param(self,"~app_enabled", self.init_app_enabled)
     app_msg = ""
     #nepi_msg.publishMsgWarn(self," Running app update process with app enabled: " + str(app_enabled))
@@ -475,11 +476,11 @@ class pantiltTargetTrackerApp(object):
     pt_needs_update = self.last_sel_pt != sel_pt
     self.last_sel_pt = sel_pt
     if pt_needs_update and sel_pt != "":
-      update_status = True
       if sel_pt == "None" and self.pt_status_sub is not None:
         self.removePtSubs()
       elif app_enabled == True:
         self.setupPtSubs(sel_pt)
+        update_status = True
       else:
         self.last_sel_pt = ""
     # Check if PT still there
@@ -695,6 +696,9 @@ class pantiltTargetTrackerApp(object):
   #######################
   ### Node Callbacks
 
+  def pubStatusCb(self,msg):
+    self.publish_status()
+
   def appEnableCb(self,msg):
     #nepi_msg.publishMsgInfo(self,msg)
     val = msg.data
@@ -871,6 +875,9 @@ class pantiltTargetTrackerApp(object):
       self.is_tracking = False
       self.is_scanning = False
     else:  
+      was_tracking = copy.deepcopy(self.is_tracking)
+      if was_tracking == False:
+        self.publish_status()
       lost_target = self.lost_target_count > self.LOST_TARGET_COUNT_LIMIT
 
       # publish error and make change
@@ -965,6 +972,7 @@ class pantiltTargetTrackerApp(object):
         if was_scanning == False:
             start_scanning = True
             self.current_scan_dir = self.last_track_dir
+            self.publish_status()
 
         if self.has_adjustable_speed == True:
           self.set_pt_speed_ratio_pub.publish(scan_speed_ratio)
@@ -985,7 +993,6 @@ class pantiltTargetTrackerApp(object):
             self.set_pt_position_pub.publish(pan_tilt_pos_msg)
             self.current_scan_dir = 1
             #nepi_msg.publishMsgWarn(self,"Changed to scan dir: " + str(self.current_scan_dir))
-            self.publish_status()
 
           elif (pan_cur > (max_pan - 5)) and self.current_scan_dir != -1:
             pan_tilt_pos_msg = PanTiltPosition()
@@ -994,7 +1001,7 @@ class pantiltTargetTrackerApp(object):
             self.set_pt_position_pub.publish(pan_tilt_pos_msg)
             self.current_scan_dir = -1
             #nepi_msg.publishMsgInfo(self,"Changed to scan dir: " + str(self.current_scan_dir))
-            self.publish_status()
+
           elif start_scanning == True or self.is_moving == False:
             if self.current_scan_dir > 0:
               pan_tilt_pos_msg = PanTiltPosition()
@@ -1017,7 +1024,7 @@ class pantiltTargetTrackerApp(object):
     self.errors_pub.publish(errors_msg)
 
     # Publish status message
-    self.publish_status()
+
 
 
 
