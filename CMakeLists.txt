@@ -219,9 +219,9 @@ set( NEPI_APP_PARAMS_FOLDER
   /opt/nepi/ros/share/nepi_apps
 )
 
-#install(DIRECTORY params/
-#  DESTINATION ${NEPI_APP_PARAMS_FOLDER} 
-#)
+install(DIRECTORY params/
+  DESTINATION ${NEPI_APP_PARAMS_FOLDER} 
+)
 
 ## Mark other files for installation (e.g. launch and bag files, etc.)
 set( NEPI_RUI_FOLDER 

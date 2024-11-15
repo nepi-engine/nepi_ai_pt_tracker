@@ -3,7 +3,7 @@ APP_DICT:
   pkg_name: nepi_app_ai_pt_tracker
   group_name: AI
   config_file: app_ai_pt_tracker.yaml
-  app_file: pt_tracker_app_node.py
+  app_file: ai_pt_tracker_app_node.py
   node_name: app_ai_pt_tracker
 RUI_DICT:
   rui_menu_name: AI PanTilt Tracker
