@@ -161,6 +161,9 @@ class pantiltTargetTrackerApp(object):
 
   pitch_yaw_errors_deg = [0.0,0.0]
 
+  img_has_subs = False
+
+  last_app_enabled = False
   #######################
   ### Node Initialization
   FACTORY_NODE_NAME = "app_ai_pt_tracker" # Can be overwitten by luanch command
@@ -373,8 +376,6 @@ class pantiltTargetTrackerApp(object):
     nepi_ros.set_param(self,"~track_tilt_offset", self.init_track_tilt_offset)
 
     nepi_ros.set_param(self,"~error_goal",self.init_error_goal)
-    self.last_image_topic = ""
-    self.last_sel_pt = ""
     nepi_ros.set_param(self,'~app_enabled',self.init_app_enabled)
     if do_updates:
         self.updateFromParamServer()
@@ -457,6 +458,7 @@ class pantiltTargetTrackerApp(object):
 
     update_status = False
     app_enabled = nepi_ros.get_param(self,"~app_enabled", self.init_app_enabled)
+
     app_msg = ""
     #nepi_msg.publishMsgWarn(self," Running app update process with app enabled: " + str(app_enabled))
     if app_enabled == False:
@@ -468,7 +470,10 @@ class pantiltTargetTrackerApp(object):
         self.image_sub.unregister()
         time.sleep(1)
         self.image_sub = None
-
+    elif self.last_app_enabled != app_enabled:
+      update_status = True
+    self.last_app_enabled = app_enabled
+    
     # Setup PT subscribers and Publishers if needed
     sel_pt = nepi_ros.get_param(self,'~pt_namespace',  self.init_pt_namespace)
     #nepi_msg.publishMsgWarn(self," Selected PT: " + str(sel_pt))
@@ -478,7 +483,7 @@ class pantiltTargetTrackerApp(object):
     if pt_needs_update and sel_pt != "":
       if sel_pt == "None" and self.pt_status_sub is not None:
         self.removePtSubs()
-      elif app_enabled == True:
+      elif app_enabled == True and sel_pt != "None":
         self.setupPtSubs(sel_pt)
         update_status = True
       else:
@@ -510,7 +515,7 @@ class pantiltTargetTrackerApp(object):
       #app_msg += ", AI Detector not connected"
     if ai_mgr_status_response != None:
       #app_msg += ", AI Detector connected"
-      #status_str = str(ai_mgr_status_response)
+      status_str = str(ai_mgr_status_response)
       #nepi_msg.publishMsgWarn(self," got ai manager status: " + status_str)
       self.current_image_topic = ai_mgr_status_response.selected_img_topic
       self.current_classifier = ai_mgr_status_response.selected_classifier
@@ -548,8 +553,8 @@ class pantiltTargetTrackerApp(object):
         image_topic = nepi_ros.find_topic(self.current_image_topic)
         if image_topic == "":
           nepi_msg.publishMsgWarn(self," Could not find image update topic: " + self.current_image_topic)
-        elif app_enabled == True:
-          nepi_msg.publishMsgInfo(self," Found detect Image update topic : " + image_topic)
+        elif app_enabled == True and image_topic != "None":
+          nepi_msg.publishMsgInfo(self," Found detect image update topic : " + image_topic)
           update_status = True
           if self.image_sub != None:
             nepi_msg.publishMsgWarn(self," Unsubscribing to Image topic : " + self.last_image_topic)
@@ -569,6 +574,9 @@ class pantiltTargetTrackerApp(object):
             self.image_sub = None
             update_status = True
             time.sleep(1)
+    # Check for img subscribers
+    if self.image_sub is not None:
+      self.img_has_subs = (self.image_sub.get_num_connections() > 0)
 
     # Check class selection
     class_sel = False
@@ -866,6 +874,8 @@ class pantiltTargetTrackerApp(object):
     min_tilt = nepi_ros.get_param(self,"~min_tilt_angle",self.init_min_tilt)
     max_tilt = nepi_ros.get_param(self,"~max_tilt_angle",self.init_max_tilt)
 
+    lost_target = self.lost_target_count > self.LOST_TARGET_COUNT_LIMIT
+
     #nepi_msg.publishMsgWarn(self," Running scan track process with app enabled: " + str(app_enabled))
     #nepi_msg.publishMsgWarn(self," Running scan track process with pt_connected: " + str(self.pt_connected))
     #nepi_msg.publishMsgWarn(self," Running scan track process with pt_status valid: " + str(self.pt_status_msg is not None))
@@ -878,7 +888,7 @@ class pantiltTargetTrackerApp(object):
       was_tracking = copy.deepcopy(self.is_tracking)
       if was_tracking == False:
         self.publish_status()
-      lost_target = self.lost_target_count > self.LOST_TARGET_COUNT_LIMIT
+
 
       # publish error and make change
       if box is not None:
@@ -899,6 +909,7 @@ class pantiltTargetTrackerApp(object):
 
 
         [pan_error,tilt_error] = self.get_target_bearings(box)
+        tilt_error = tilt_error + track_tilt_offset
         self.pitch_yaw_errors_deg = [pan_error,tilt_error]
         #nepi_msg.publishMsgWarn(self,"Error Goal set to: " + str(error_goal))
         #nepi_msg.publishMsgWarn(self,"Got Targets Errors pan tilt: " + str(self.pitch_yaw_errors_deg))
@@ -918,7 +929,7 @@ class pantiltTargetTrackerApp(object):
                 pan_to_goal = max_pan
             # Set tilt angle goal
             if abs(tilt_error) > error_goal:
-                tilt_to_goal = tilt_cur + tilt_error/3
+                tilt_to_goal = tilt_cur + tilt_error/3 
             else:
                 tilt_to_goal = tilt_cur
             if tilt_to_goal < min_tilt:
@@ -944,9 +955,7 @@ class pantiltTargetTrackerApp(object):
             else: 
                 self.last_track_dir = -1
             #nepi_msg.publishMsgWarn(self,"Track dir: " + str(self.last_track_dir))
-      elif lost_target == False:
-        self.pt_stop_motion_pub.publish(Empty())
-      else:
+      elif lost_target == True:
         was_scanning = copy.deepcopy(self.is_scanning)
         self.is_tracking = False
         self.is_scanning = True
@@ -1052,17 +1061,21 @@ class pantiltTargetTrackerApp(object):
 
 
   def imagePubCb(self,timer):
+    data_product = 'tracking_image'
+    has_subscribers = self.img_has_subs
+    saving_is_enabled = self.save_data_if.data_product_saving_enabled(data_product)
+    snapshot_enabled = self.save_data_if.data_product_snapshot_enabled(data_product)
     app_enabled = nepi_ros.get_param(self,"~app_enabled", self.init_app_enabled)
     if app_enabled == False:
       #nepi_msg.publishMsgWarn(self,"Publishing Not Enabled image")
       if not nepi_ros.is_shutdown():
         self.app_ne_img.header.stamp = nepi_ros.time_now()
         self.image_pub.publish(self.app_ne_img)
-    elif self.image_sub == None:
+    elif self.image_sub == None and has_subscribers:
       if not nepi_ros.is_shutdown():
         self.classifier_nr_img.header.stamp = nepi_ros.time_now()
         self.image_pub.publish(self.classifier_nr_img)
-    else:
+    elif has_subscribers or saving_is_enabled or snapshot_enabled:
       self.img_lock.acquire()
       img_msg = copy.deepcopy(self.img_msg)
       self.img_lock.release()
@@ -1090,7 +1103,7 @@ class pantiltTargetTrackerApp(object):
           cv2.rectangle(cv2_img, start_point, end_point, class_color, thickness=line_thickness)
 
           # Publish new image to ros
-          if not nepi_ros.is_shutdown(): #and has_subscribers:
+          if not nepi_ros.is_shutdown() and has_subscribers: #and has_subscribers:
               #Convert OpenCV image to ROS image
               cv2_shape = cv2_img.shape
               if  cv2_shape[2] == 3:
@@ -1101,9 +1114,10 @@ class pantiltTargetTrackerApp(object):
               img_out_msg.header.stamp = ros_timestamp
               self.image_pub.publish(img_out_msg)
           # Save Data if Time
-          nepi_save.save_img2file(self,'tracking_image',cv2_img,ros_timestamp,save_check = True)
+          if saving_is_enabled or snapshot_enabled:
+            nepi_save.save_img2file(self,data_product,cv2_img,ros_timestamp,save_check = False)
         else:
-            if not nepi_ros.is_shutdown(): #and has_subscribers:
+            if not nepi_ros.is_shutdown() and has_subscribers:
               self.image_pub.publish(img_msg)
         # Set up next scan track process
 

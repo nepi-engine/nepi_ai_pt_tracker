@@ -381,7 +381,7 @@ renderApp() {
         <Column>
 
 
-          <Label title={"Classifier Running"}>
+          <Label title={"AI Detection Running"}>
             <BooleanIndicator value={this.state.classifier_running} />
           </Label>
 
@@ -393,6 +393,7 @@ renderApp() {
           <Label title={"Target Class Selected"}>
             <BooleanIndicator value={class_sel} />
           </Label>
+
 
       </Column>
       <Column>
@@ -409,17 +410,31 @@ renderApp() {
             <BooleanIndicator value={this.state.target_detected} />
           </Label>
 
-              <Label title={"Pitch Deg Error"}>
-            <Input disabled value={this.state.pitch_deg} />
-          </Label>
 
-              <Label title={"Yaw Deg Error"}>
-            <Input disabled value={this.state.yaw_deg} />
-          </Label> 
   
       </Column>
     </Columns>
      
+
+    <Columns>
+        <Column>
+
+           <Label title={"Pitch Deg Error"}>
+            <Input disabled value={round(this.state.pitch_deg,2)} />
+          </Label>
+
+      </Column>
+      <Column>
+
+              <Label title={"Yaw Deg Error"}>
+            <Input disabled value={round(this.state.yaw_deg,2)} />
+          </Label> 
+  
+      </Column>
+    </Columns>
+
+
+
 
       <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
 
@@ -627,8 +642,8 @@ renderApp() {
                                 adjustment={this.state.scan_tilt_offset}
                                 topic={appNamespace + "/set_scan_tilt_offset"}
                                 scaled={1.0}
-                                min={tilt_min}
-                                max={tilt_max}
+                                min={set_tilt_min}
+                                max={set_tilt_max}
                                 tooltip={""}
                                 unit={""}
                             />
@@ -670,8 +685,8 @@ renderApp() {
                                   adjustment={this.state.track_tilt_offset}
                                   topic={appNamespace + "/set_track_tilt_offset"}
                                   scaled={1.0}
-                                  min={tilt_min}
-                                  max={tilt_max}
+                                  min={set_tilt_min/2}
+                                  max={set_tilt_max/2}
                                   tooltip={""}
                                   unit={""}
                               />
@@ -683,7 +698,7 @@ renderApp() {
 
       </div>
 
-
+      </div>
       <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
 
       <Columns>
@@ -711,7 +726,7 @@ renderApp() {
           </Column>
         </Columns>
 
-      </div>
+
 
     </Column>
       </Columns>
@@ -750,7 +765,7 @@ renderApp() {
             <Columns>
             <Column>
 
-            <Label title="Show Detector Settings">
+            <Label title="Show AI Detector Settings">
                     <Toggle
                     checked={(this.state.show_detector_box === true)}
                     onClick={() => onChangeSwitchStateValue.bind(this)("show_detector_box",this.state.show_detector_box)}>
