@@ -295,12 +295,13 @@ createPTXOptions() {
 
 onEnterSendInputBoxRangeWindowValue(event, topicName, entryName) {
   const {publishRangeWindow} = this.props.ros
-  const namespace = this.props.processNamespace + topicName
+  const appNamespace = this.getAppNamespace()
+  const namespace = appNamespace + topicName
   if(event.key === 'Enter'){
     const value = parseFloat(event.target.value)
     if (!isNaN(value)){
-      var min = this.state.range_clip_min_m
-      var max = this.state.range_clip_max_m
+      var min = this.state.pan_min
+      var max = this.state.pan_max
       if (entryName === "min"){
         min = value
       }
@@ -579,36 +580,44 @@ renderApp() {
                 </Columns>
 
 
+                <Columns>
+                  <Column>
+
                 <Label title={"Set Pan Min"}>
                     <Input id="set_pan_min" 
-                      value={this.state.pan_min} 
-                      onChange={(event) => onUpdateSetStateValue.bind(this)(event,"pan_min")} 
+                      value={this.state.set_pan_min} 
+                      onChange={(event) => onUpdateSetStateValue.bind(this)(event,"set_pan_min")} 
                       onKeyDown= {(event) => this.onEnterSendInputBoxRangeWindowValue(event,"/set_min_max_pan_angles","min")} />
               </Label>
             
 
                   <Label title={"Set Pan Max"}>
-                    <Input id="set_pan_min" 
-                     value={this.state.pan_max} 
-                      onChange={(event) => onUpdateSetStateValue.bind(this)(event,"pan_max")} 
+                    <Input id="set_pan_max" 
+                     value={this.state.set_pan_max} 
+                      onChange={(event) => onUpdateSetStateValue.bind(this)(event,"set_pan_max")} 
                       onKeyDown= {(event) => this.onEnterSendInputBoxRangeWindowValue(event,"/set_min_max_pan_angles","max")} />                      
                   </Label>  
 
+                </Column>
+                <Column>
 
                   <Label title={"Set Tilt Min"}>
                     <Input id="set_tilt_min" 
-                      value={this.state.tilt_min} 
-                      onChange={(event) => onUpdateSetStateValue.bind(this)(event,"tilt_min")} 
+                      value={this.state.set_tilt_min} 
+                      onChange={(event) => onUpdateSetStateValue.bind(this)(event,"set_tilt_min")} 
                       onKeyDown= {(event) => this.onEnterSendInputBoxRangeWindowValue(event,"/set_min_max_tilt_angles","min")} />
               </Label>
             
 
                   <Label title={"Set Tilt Max"}>
-                    <Input id="set_tilt_min" 
-                     value={this.state.tilt_max} 
-                      onChange={(event) => onUpdateSetStateValue.bind(this)(event,"tilt_max")} 
+                    <Input id="set_tilt_max" 
+                     value={this.state.set_tilt_max} 
+                      onChange={(event) => onUpdateSetStateValue.bind(this)(event,"set_tilt_max")} 
                       onKeyDown= {(event) => this.onEnterSendInputBoxRangeWindowValue(event,"/set_min_max_tilt_angles","max")} />                      
                   </Label>  
+
+                  </Column>
+                </Columns>
 
               <Columns>
                 <Column>
