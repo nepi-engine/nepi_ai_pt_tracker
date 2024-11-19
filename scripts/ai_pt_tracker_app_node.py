@@ -160,6 +160,7 @@ class pantiltTargetTrackerApp(object):
   img_has_subs = False
 
   last_app_enabled = False
+
   #######################
   ### Node Initialization
   FACTORY_NODE_NAME = "app_ai_pt_tracker" # Can be overwitten by luanch command
@@ -195,6 +196,16 @@ class pantiltTargetTrackerApp(object):
     message = "WAITING FOR AI DETECTOR TO START"
     cv2_img = nepi_img.create_message_image(message)
     self.classifier_nr_img = nepi_img.cv2img_to_rosimg(cv2_img)
+
+    message = "WAITING FOR TARGET CLASS SELECTION"
+    cv2_img = nepi_img.create_message_image(message)
+    self.no_class_img = nepi_img.cv2img_to_rosimg(cv2_img)
+
+    message = "WAITING FOR PANTILT SELECTION"
+    cv2_img = nepi_img.create_message_image(message)
+    self.no_pt_img = nepi_img.cv2img_to_rosimg(cv2_img)
+
+
 
 
     # Set up save data and save config services ########################################################
@@ -542,7 +553,7 @@ class pantiltTargetTrackerApp(object):
         #classes_str = str(self.classes_list)
         #nepi_msg.publishMsgWarn(self," got ai manager status: " + classes_str)
         update_status = True
-
+      self.classes_list = classes_list
       nepi_ros.set_param(self,'~last_classiier', self.current_classifier)
       #nepi_msg.publishMsgWarn(self," Got image topics last and current: " + self.last_image_topic + " " + self.current_image_topic)
 
@@ -599,6 +610,25 @@ class pantiltTargetTrackerApp(object):
       else:
         app_msg += ", Target selected"
     self.class_selected = class_sel
+
+    # Print a message image if needed
+    if app_enabled == False:
+      #nepi_msg.publishMsgWarn(self,"Publishing Not Enabled image")
+      if not nepi_ros.is_shutdown():
+        self.app_ne_img.header.stamp = nepi_ros.time_now()
+        self.image_pub.publish(self.app_ne_img)
+    elif self.classifier_running == False:
+      if not nepi_ros.is_shutdown():
+        self.classifier_nr_img.header.stamp = nepi_ros.time_now()
+        self.image_pub.publish(self.classifier_nr_img)
+    elif self.class_selected == False:
+      if not nepi_ros.is_shutdown():
+        self.no_class_img.header.stamp = nepi_ros.time_now()
+        self.image_pub.publish(self.no_class_img)
+    elif self.pt_connected == False:
+      if not nepi_ros.is_shutdown():
+        self.no_class_img.header.stamp = nepi_ros.time_now()
+        self.image_pub.publish(self.no_pt_img)
 
 
     # Update status app msg
@@ -1112,60 +1142,51 @@ class pantiltTargetTrackerApp(object):
     should_save = (saving_is_enabled and self.save_data_if.data_product_should_save(data_product)) or snapshot_enabled
     #nepi_msg.publishMsgWarn(self,"Checking for save_: " + str(should_save))
     app_enabled = nepi_ros.get_param(self,"~app_enabled", self.init_app_enabled)
-    if app_enabled == False:
-      #nepi_msg.publishMsgWarn(self,"Publishing Not Enabled image")
-      if not nepi_ros.is_shutdown():
-        self.app_ne_img.header.stamp = nepi_ros.time_now()
-        self.image_pub.publish(self.app_ne_img)
-    elif self.image_sub == None and has_subscribers:
-      if not nepi_ros.is_shutdown():
-        self.classifier_nr_img.header.stamp = nepi_ros.time_now()
-        self.image_pub.publish(self.classifier_nr_img)
-    elif has_subscribers or should_save:
-      self.img_lock.acquire()
-      img_msg = copy.deepcopy(self.img_msg)
-      self.img_lock.release()
-      if img_msg is not None:
-        ros_timestamp = img_msg.header.stamp
-        self.target_box_lock.acquire()
-        box = copy.deepcopy(self.target_box)      
-        self.target_box_lock.release()
-        #nepi_msg.publishMsgWarn(self,"Got image to publish")
-        if box is not None:
-          #nepi_msg.publishMsgWarn(self,"Overlaying target on image: " + str(box))
-          current_image_header = img_msg.header
-          ros_timestamp = img_msg.header.stamp     
-          cv2_img = nepi_img.rosimg_to_cv2img(img_msg).astype(np.uint8)
+    if app_enabled and self.image_sub is not None and self.classifier_running and self.class_selected and self.pt_connected:
+      if has_subscribers or should_save:
+        self.img_lock.acquire()
+        img_msg = copy.deepcopy(self.img_msg)
+        self.img_lock.release()
+        if img_msg is not None:
+          ros_timestamp = img_msg.header.stamp
+          self.target_box_lock.acquire()
+          box = copy.deepcopy(self.target_box)      
+          self.target_box_lock.release()
+          #nepi_msg.publishMsgWarn(self,"Got image to publish")
+          if box is not None:
+            #nepi_msg.publishMsgWarn(self,"Overlaying target on image: " + str(box))
+            current_image_header = img_msg.header
+            ros_timestamp = img_msg.header.stamp     
+            cv2_img = nepi_img.rosimg_to_cv2img(img_msg).astype(np.uint8)
 
-          #nepi_msg.publishMsgWarn(self," Box: " + str(box))
-          class_name = box.Class
+            #nepi_msg.publishMsgWarn(self," Box: " + str(box))
+            class_name = box.Class
 
-          [xmin,xmax,ymin,ymax] = [box.xmin,box.xmax,box.ymin,box.ymax]
-          start_point = (xmin, ymin)
-          end_point = (xmax, ymax)
-          class_name = class_name
-          class_color = (0,255,0)
-          line_thickness = 2
-          cv2.rectangle(cv2_img, start_point, end_point, class_color, thickness=line_thickness)
+            [xmin,xmax,ymin,ymax] = [box.xmin,box.xmax,box.ymin,box.ymax]
+            start_point = (xmin, ymin)
+            end_point = (xmax, ymax)
+            class_name = class_name
+            class_color = (0,255,0)
+            line_thickness = 2
+            cv2.rectangle(cv2_img, start_point, end_point, class_color, thickness=line_thickness)
 
-          # Publish new image to ros
-          if not nepi_ros.is_shutdown() and has_subscribers: #and has_subscribers:
-              #Convert OpenCV image to ROS image
-              cv2_shape = cv2_img.shape
-              if  cv2_shape[2] == 3:
-                encode = 'bgr8'
-              else:
-                encode = 'mono8'
-              img_out_msg = nepi_img.cv2img_to_rosimg(cv2_img, encoding=encode)
-              img_out_msg.header.stamp = ros_timestamp
-              self.image_pub.publish(img_out_msg)
-          # Save Data if Time
-          if should_save:
-            nepi_save.save_img2file(self,data_product,cv2_img,ros_timestamp,save_check = False)
-        else:
-            if not nepi_ros.is_shutdown() and has_subscribers:
-              self.image_pub.publish(img_msg)
-        # Set up next scan track process
+            # Publish new image to ros
+            if not nepi_ros.is_shutdown() and has_subscribers: #and has_subscribers:
+                #Convert OpenCV image to ROS image
+                cv2_shape = cv2_img.shape
+                if  cv2_shape[2] == 3:
+                  encode = 'bgr8'
+                else:
+                  encode = 'mono8'
+                img_out_msg = nepi_img.cv2img_to_rosimg(cv2_img, encoding=encode)
+                img_out_msg.header.stamp = ros_timestamp
+                self.image_pub.publish(img_out_msg)
+            # Save Data if Time
+            if should_save:
+              nepi_save.save_img2file(self,data_product,cv2_img,ros_timestamp,save_check = False)
+          else:
+              if not nepi_ros.is_shutdown() and has_subscribers:
+                self.image_pub.publish(img_msg)
 
     ### If object(s) detected, save bounding box info to global
   def objectDetectedCb(self,bounding_boxes_msg):
