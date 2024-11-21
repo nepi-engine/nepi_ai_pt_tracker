@@ -23,8 +23,6 @@ import Section from "./Section"
 import { Columns, Column } from "./Columns"
 import Select, { Option } from "./Select"
 import { SliderAdjustment } from "./AdjustmentWidgets"
-import RangeAdjustment from "./RangeAdjustment"
-import RangeAdjustmentAbs from "./RangeAdjustmentAbs"
 import Button, { ButtonMenu } from "./Button"
 import Label from "./Label"
 import Input from "./Input"
@@ -37,7 +35,7 @@ import AiDetectorMgr from "./NepiMgrAiDetector"
 import CameraViewer from "./CameraViewer"
 import NepiIFSaveData from "./Nepi_IF_SaveData"
 
-import {createShortUniqueValues, onDropdownSelectedSendStr, createMenuListFromStrList, createShortValuesFromNamespaces, onChangeSwitchStateValue, onUpdateSetStateValue, onEnterSendFloatValue} from "./Utilities"
+import {createShortUniqueValues, onDropdownSelectedSendStr, createMenuListFromStrList, onUpdateSetStateValue} from "./Utilities"
 
 function round(value, decimals = 0) {
   return Number(value).toFixed(decimals)
@@ -289,8 +287,6 @@ class AiPtTrackerApp extends Component {
 createPTXOptions() {
   const { ptxUnits} = this.props.ros
   const topics = Object.keys(ptxUnits)
-  var filteredTopics = topics
-  const sel_pt = this.state.selected_pantilt
   var i
   var items = []
   items.push(<Option value={"None"}>{"None"}</Option>)
@@ -326,23 +322,15 @@ onEnterSendInputBoxRangeWindowValue(event, topicName, entryName) {
 
 
 renderApp() {
-  const {sendTriggerMsg, sendStringMsg, sendBoolMsg, ptxUnits} = this.props.ros
+  const {sendTriggerMsg, sendBoolMsg} = this.props.ros
   const pantilt_options = this.createPTXOptions()
   const sel_pantilt = this.state.selected_pantilt
   const pantilt_connected = this.state.pantilt_connected
-  const sel_pt = this.state.selected_pantilt
   const NoneOption = <Option>None</Option>
-  const classifier_running = this.state.classifier_running
   const selectedClass = this.state.selected_class
   const class_sel = selectedClass !== null && selectedClass !== 'None'
   const connected = this.state.connected === true
   const appNamespace = this.getAppNamespace()
-  const pan_min = this.state.pan_min ? this.state.pan_min : -180
-  const pan_max = this.state.pan_max ? this.state.pan_max : 180
-  const tilt_min = this.state.tilt_min ? this.state.tilt_min : -180
-  const tilt_max = this.state.tilt_max  ? this.state.tilt_max : 180
-  const set_pan_min = this.state.set_pan_min ? this.state.set_pan_min : -180
-  const set_pan_max = this.state.set_pan_max ? this.state.set_pan_max : 180
   const set_tilt_min = this.state.set_tilt_min ? this.state.set_tilt_min : -180
   const set_tilt_max = this.state.set_tilt_max ? this.state.set_tilt_max : 180
 
