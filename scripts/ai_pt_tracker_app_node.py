@@ -644,7 +644,7 @@ class pantiltTargetTrackerApp(object):
     if pt_namespace is not None:
       if pt_namespace != "None" and pt_namespace != "":
         pt_status_topic = os.path.join(pt_namespace,"/ptx/status")
-        nepi_msg.publishMsgInfo(self,"Waiting for topic name: " + pt_status_topic)
+        nepi_msg.publishMsgInfo(self,"Looking for topic name: " + pt_status_topic)
         self.pt_status_topic=nepi_ros.find_topic(pt_status_topic)
         if self.pt_status_sub is not None:
           self.pt_connected = False
