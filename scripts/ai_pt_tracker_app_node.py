@@ -1215,7 +1215,13 @@ class pantiltTargetTrackerApp(object):
           if box_area_ratio > largest_box_area_ratio:
             largest_box_area_ratio=box_area_ratio
             largest_target=box
-      if largest_box_area_ratio < min_area_ratio:
+      if largest_target == None:
+            self.lost_target_count += 1
+            self.target_detected = False
+            self.target_box_lock.acquire()
+            self.target_box = None      
+            self.target_box_lock.release()
+      elif largest_box_area_ratio < min_area_ratio and min_area_ratio != 0:
             self.lost_target_count += 1
             self.target_detected = False
             self.target_box_lock.acquire()
