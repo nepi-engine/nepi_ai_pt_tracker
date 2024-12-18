@@ -679,11 +679,7 @@ class pantiltTargetTrackerApp(object):
             self.has_position_feedback = False
             self.has_adjustable_speed =  False
 
-
-          ## Create Class Subscribers
-          nepi_msg.publishMsgInfo(self,"Subscribing to PTX Status Msg: " + self.pt_status_topic)
-
-          ## Create Class Publishers
+          ## Create Publishers
           self.send_pt_home_pub = rospy.Publisher(PTX_GOHOME_TOPIC, Empty, queue_size=10)
           self.set_pt_speed_ratio_pub = rospy.Publisher(PTX_SET_SPEED_RATIO_TOPIC, Float32, queue_size=10)
           self.set_pt_position_pub = rospy.Publisher(PTX_JOG_POSITION_TOPIC, PanTiltPosition, queue_size=10)
@@ -694,6 +690,8 @@ class pantiltTargetTrackerApp(object):
           self.set_pt_soft_limits_pub = rospy.Publisher(PTX_SET_SOFT_LIMITS_TOPIC, PanTiltLimits, queue_size=10)
           self.pt_stop_motion_pub = rospy.Publisher(PTX_STOP_TOPIC, Empty, queue_size=10)
           time.sleep(1)
+          ## Create Subscribers
+          nepi_msg.publishMsgInfo(self,"Subscribing to PTX Status Msg: " + self.pt_status_topic)
           self.pt_status_sub = rospy.Subscriber(self.pt_status_topic, PanTiltStatus, self.ptStatusCb, queue_size = 1)
           #self.pt_connected = True # Set in pt_status callback
       else:
