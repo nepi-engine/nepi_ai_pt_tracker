@@ -28,10 +28,10 @@ import threading
 import statistics
 import numpy as np
 import cv2
-from nepi_edge_sdk_base import nepi_ros 
-from nepi_edge_sdk_base import nepi_msg
-from nepi_edge_sdk_base import nepi_save
-from nepi_edge_sdk_base import nepi_img
+from nepi_sdk import nepi_ros 
+from nepi_sdk import nepi_msg
+from nepi_sdk import nepi_save
+from nepi_sdk import nepi_img
 
 from std_msgs.msg import Bool, UInt8, Empty, Int32,Float32, String
 from sensor_msgs.msg import Image
@@ -45,8 +45,8 @@ from nepi_ros_interfaces.srv import ImageClassifierStatusQuery, ImageClassifierS
 from nepi_app_ai_targeting.msg import AiTargetingStatus
 from nepi_app_ai_pt_tracker.msg import AiPtTrackerStatus , TrackingErrors
 
-from nepi_edge_sdk_base.save_data_if import SaveDataIF
-from nepi_edge_sdk_base.save_cfg_if import SaveCfgIF
+from nepi_sdk.save_data_if import SaveDataIF
+from nepi_sdk.save_cfg_if import SaveCfgIF
 
 
 #########################################
@@ -56,7 +56,7 @@ from nepi_edge_sdk_base.save_cfg_if import SaveCfgIF
 class pantiltTargetTrackerApp(object):
   AI_MANAGER_NODE_NAME = "ai_detector_mgr"
 
-  UDATER_PROCESS_DELAY = 1
+  UPDATER_PROCESS_DELAY = 1
   SCAN_TRACK_PROCESS_DELAY = 1
   IMG_PUB_PROCESS_DELAY = 0.2
 
@@ -72,7 +72,7 @@ class pantiltTargetTrackerApp(object):
 
 
   FACTORY_CLASS = "None"
-  FACTORY_SCAN_TIME = 5.0
+  FACTORY_TRACK_UPDATE_RATE = 1
   FACTORY_MIN_AREA_RATIO = 0.01 # Filters background targets.
   FACTORY_SCAN_SPEED_RATIO = 0.6
   FACTORY_SCAN_TILT_DEG = 0.0
@@ -89,7 +89,8 @@ class pantiltTargetTrackerApp(object):
   FACTORY_TARGET_Q_LEN = 3
   FACTORY_TARGET_L_LEN = 5
 
-  MAX_SCAN_TIME = 10
+  MIN_TRACK_UPDATE_RATE = 1
+  MAX_TRACK_UPDATE_RATE = 10
   TRACK_JOG_TIME = 0.5
 
   data_products = ["tracking_image"]
@@ -128,6 +129,7 @@ class pantiltTargetTrackerApp(object):
   set_pt_soft_limits_pub  = None
   pt_stop_motion_pub  = None
   cur_speed_ratio = 0.5
+  last_track_time = 0
 
   class_selected = False
   selected_class = "None"
@@ -247,7 +249,7 @@ class pantiltTargetTrackerApp(object):
     rospy.Subscriber("~set_min_area_ratio", Float32, self.setMinAreaCb, queue_size = 10)
 
     rospy.Subscriber('~select_pantilt', String, self.setPtTopicCb, queue_size = 10)
-    rospy.Subscriber("~set_scan_time", Float32, self.setTimedScanCb, queue_size = 10)
+    rospy.Subscriber("~set_track_update_rate", Float32, self.setTrackUpdateRateCb, queue_size = 10)
     rospy.Subscriber("~set_scan_speed_ratio", Float32, self.setScanSpeedCb, queue_size = 10)
     rospy.Subscriber("~set_scan_tilt_offset", Float32, self.setScanTiltOffsetCb, queue_size = 10)
     rospy.Subscriber('~set_min_max_pan_angles', RangeWindow, self.setMinMaxPanCb, queue_size = 10)
@@ -278,7 +280,7 @@ class pantiltTargetTrackerApp(object):
     ## Start Node Processes
     # Set up the timer that start scanning when no objects are detected
     nepi_msg.publishMsgInfo(self,"Setting up processes")
-    nepi_ros.timer(nepi_ros.duration(self.UDATER_PROCESS_DELAY), self.updaterCb)
+    nepi_ros.timer(nepi_ros.duration(self.UPDATER_PROCESS_DELAY), self.updaterCb)
     nepi_ros.timer(nepi_ros.duration(self.SCAN_TRACK_PROCESS_DELAY), self.scanTrackCb)
     nepi_ros.timer(nepi_ros.duration(self.IMG_PUB_PROCESS_DELAY), self.imagePubCb)
 
@@ -308,7 +310,7 @@ class pantiltTargetTrackerApp(object):
     nepi_ros.set_param(self,"~min_ratio",self.FACTORY_MIN_AREA_RATIO)
 
     nepi_ros.set_param(self,"~pt_namespace","None")
-    nepi_ros.set_param(self,"~scan_time",self.FACTORY_SCAN_TIME)
+    nepi_ros.set_param(self,"~track_update_rate",self.FACTORY_TRACK_UPDATE_RATE)
     nepi_ros.set_param(self,"~scan_speed_ratio",self.FACTORY_SCAN_SPEED_RATIO)
     nepi_ros.set_param(self,"~scan_tilt_offset",self.FACTORY_SCAN_TILT_DEG)
 
@@ -352,7 +354,7 @@ class pantiltTargetTrackerApp(object):
     self.init_min_area_ratio = nepi_ros.get_param(self,"~min_area_ratio",self.FACTORY_MIN_AREA_RATIO)
 
     self.init_pt_namespace = nepi_ros.get_param(self,"~pt_namespace","")
-    self.init_scan_time = nepi_ros.get_param(self,"~scan_time",self.FACTORY_SCAN_TIME)
+    self.init_track_update_rate = nepi_ros.get_param(self,"~track_update_rate",self.FACTORY_TRACK_UPDATE_RATE)
     self.init_scan_speed_ratio = nepi_ros.get_param(self,"~scan_speed_ratio",self.FACTORY_SCAN_SPEED_RATIO)
     self.init_scan_tilt_offset = nepi_ros.get_param(self,"~scan_tilt_offset",self.FACTORY_SCAN_TILT_DEG)
   
@@ -387,7 +389,7 @@ class pantiltTargetTrackerApp(object):
     nepi_ros.set_param(self,"~min_area_ratio",self.init_min_area_ratio)
 
     nepi_ros.set_param(self,"~pt_namespace",self.init_pt_namespace)
-    nepi_ros.set_param(self,"~scan_time",self.init_scan_time)
+    nepi_ros.set_param(self,"~track_update_rate",self.init_track_update_rate)
     nepi_ros.set_param(self,"~scan_speed_ratio",self.init_scan_speed_ratio)
     nepi_ros.set_param(self,"~scan_tilt_offset",self.init_scan_tilt_offset)
 
@@ -458,8 +460,7 @@ class pantiltTargetTrackerApp(object):
     status_msg.set_tilt_min_max_deg = [min_tilt,max_tilt]
     
 
-    status_msg.max_scan_time_sec = self.MAX_SCAN_TIME
-    status_msg.scan_time_sec = nepi_ros.get_param(self,"~scan_time",self.init_scan_time)
+    status_msg.track_update_rate_hz = nepi_ros.get_param(self,"~track_update_rate",self.init_track_update_rate)
     status_msg.min_area_ratio = nepi_ros.get_param(self,"~min_area_ratio",self.init_min_area_ratio)
     status_msg.scan_speed_ratio = nepi_ros.get_param(self,"~scan_speed_ratio",self.init_scan_speed_ratio)
     status_msg.scan_tilt_offset = nepi_ros.get_param(self,"~scan_tilt_offset",self.init_scan_tilt_offset)
@@ -527,7 +528,7 @@ class pantiltTargetTrackerApp(object):
     sel_pt = nepi_ros.get_param(self,'~pt_namespace',  self.init_pt_namespace)
     pt_valid = sel_pt != "None" and sel_pt != ""
     pt_changed = sel_pt != self.last_sel_pt
-   
+
     #nepi_msg.publishMsgWarn(self," Selected PT: " + str(sel_pt))
     #nepi_msg.publishMsgWarn(self," Last Selected PT: " + str(self.last_sel_pt))
     #nepi_msg.publishMsgWarn(self," PT Connected: " + str(self.pt_connected))
@@ -830,11 +831,14 @@ class pantiltTargetTrackerApp(object):
     self.publish_status()
 
 
-  def setTimedScanCb(self,msg):
+  def setTrackUpdateRateCb(self,msg):
     ##nepi_msg.publishMsgInfo(self,msg)
     val = msg.data
-    if val > 0 and val <= MAX_SCAN_TIME:
-      nepi_ros.set_param(self,'~scan_time',  val)
+    if val < self.MIN_TRACK_UPDATE_RATE:
+      val = self.MIN_TRACK_UPDATE_RATE
+    if val > self.MAX_TRACK_UPDATE_RATE:
+      val = self.MAX_TRACK_UPDATE_RATE
+      nepi_ros.set_param(self,'~track_update_rate',  val)
     self.publish_status()
 
   def setTargetQLenCb(self,msg):
@@ -1224,83 +1228,87 @@ class pantiltTargetTrackerApp(object):
         self.is_scanning = False
         self.start_scanning = True
 
-        error_goal = nepi_ros.get_param(self,"~error_goal",self.init_error_goal)
-        track_speed_ratio = nepi_ros.get_param(self,"~track_speed_ratio",self.init_track_speed_ratio)
-        track_tilt_offset = nepi_ros.get_param(self,"~track_tilt_offset", self.init_track_tilt_offset)         
-        if self.has_adjustable_speed == True and self.cur_speed_ratio != track_speed_ratio:
-          try:
-            self.set_pt_speed_ratio_pub.publish(track_speed_ratio)
-          except:
-            pass
-        #nepi_msg.publishMsgWarn(self,"Error Goal set to: " + str(error_goal))
-        #nepi_msg.publishMsgWarn(self,"Got Targets Errors pan tilt: " + str(self.pan_tilt_errors_deg))
-        pan_error_q = []
-        tilt_error_q = []
-        for box in box_q:
-          [pan_error,tilt_error] = self.get_target_bearings(box)
-          pan_error_q.append(pan_error)
-          tilt_error_q.append(tilt_error)
-        pan_error_avg = sum(pan_error_q) / len(pan_error_q)
-        tilt_error_avg = sum(tilt_error_q) / len(tilt_error_q)
-   
+        track_delay = float(1)/nepi_ros.get_param(self,'~track_update_rate',  self.init_track_update_rate)
+        time_now = time.time()
+        if (time_now - self.last_track_time + self.SCAN_TRACK_PROCESS_DELAY) > track_delay:
+          self.last_track_time = time_now 
+          error_goal = nepi_ros.get_param(self,"~error_goal",self.init_error_goal)
+          track_speed_ratio = nepi_ros.get_param(self,"~track_speed_ratio",self.init_track_speed_ratio)
+          track_tilt_offset = nepi_ros.get_param(self,"~track_tilt_offset", self.init_track_tilt_offset)         
+          if self.has_adjustable_speed == True and self.cur_speed_ratio != track_speed_ratio:
+            try:
+              self.set_pt_speed_ratio_pub.publish(track_speed_ratio)
+            except:
+              pass
+          #nepi_msg.publishMsgWarn(self,"Error Goal set to: " + str(error_goal))
+          #nepi_msg.publishMsgWarn(self,"Got Targets Errors pan tilt: " + str(self.pan_tilt_errors_deg))
+          pan_error_q = []
+          tilt_error_q = []
+          for box in box_q:
+            [pan_error,tilt_error] = self.get_target_bearings(box)
+            pan_error_q.append(pan_error)
+            tilt_error_q.append(tilt_error)
+          pan_error_avg = sum(pan_error_q) / len(pan_error_q)
+          tilt_error_avg = sum(tilt_error_q) / len(tilt_error_q)
+    
 
-        pan_to_goal = pan_cur + pan_error_avg/3
-        tilt_to_goal = tilt_cur + tilt_error_avg/3 
+          pan_to_goal = pan_cur + pan_error_avg /2
+          tilt_to_goal = tilt_cur + tilt_error_avg /2 
 
-        self.pan_tilt_errors_deg = [pan_error_avg,tilt_error_avg]
+          self.pan_tilt_errors_deg = [pan_error_avg,tilt_error_avg]
 
 
-        if pan_error_avg > 0:
-            self.last_track_dir = 1
-        else: 
-            self.last_track_dir = -1
-        self.current_scan_dir = self.last_track_dir
+          if pan_error_avg > 0:
+              self.last_track_dir = 1
+          else: 
+              self.last_track_dir = -1
+          self.current_scan_dir = self.last_track_dir
 
-        if abs(tilt_error_avg) < error_goal and abs(pan_error_avg) < error_goal:
-            #nepi_msg.publishMsgWarn(self,"Tracking within error bounds")
-            #try:
-              #self.pt_stop_motion_pub.publish(Empty())
-            #except:
-              #pass
-            pass
-        else:
-            # Set pan angle goal
+          if abs(tilt_error_avg) < error_goal and abs(pan_error_avg) < error_goal:
+              #nepi_msg.publishMsgWarn(self,"Tracking within error bounds")
+              #try:
+                #self.pt_stop_motion_pub.publish(Empty())
+              #except:
+                #pass
+              pass
+          else:
+              # Set pan angle goal
 
-            if abs(pan_error_avg) < error_goal:
-                pan_to_goal = pan_cur
-            if pan_to_goal < min_pan:
-                pan_to_goal = min_pan
-            if pan_to_goal > max_pan:
-                pan_to_goal = max_pan
+              if abs(pan_error_avg) < error_goal:
+                  pan_to_goal = pan_cur
+              if pan_to_goal < min_pan:
+                  pan_to_goal = min_pan
+              if pan_to_goal > max_pan:
+                  pan_to_goal = max_pan
 
-            # Set tilt angle goal
+              # Set tilt angle goal
 
-            if abs(tilt_error_avg) < error_goal:
-                tilt_to_goal = tilt_cur
-            if tilt_to_goal < min_tilt:
-                tilt_to_goal = min_tilt
-            if tilt_to_goal > max_tilt:
-                tilt_to_goal = max_tilt
+              if abs(tilt_error_avg) < error_goal:
+                  tilt_to_goal = tilt_cur
+              if tilt_to_goal < min_tilt:
+                  tilt_to_goal = min_tilt
+              if tilt_to_goal > max_tilt:
+                  tilt_to_goal = max_tilt
 
-            #nepi_msg.publishMsgWarn(self,"Current Pos: " + str([pan_cur,tilt_cur]))
-            #nepi_msg.publishMsgWarn(self,"Track to Pos: " + str([pan_to_goal,tilt_to_goal]))
-            if self.has_position_feedback == True:
-              # Send angle goal
-              pt_pos_msg = PanTiltPosition()
-              pt_pos_msg.yaw_deg = pan_to_goal
-              pt_pos_msg.pitch_deg = tilt_to_goal
-              if not nepi_ros.is_shutdown():
-                try:
-                  self.set_pt_position_pub.publish(pt_pos_msg)   
-                  self.pan_tilt_goal_deg = [pan_to_goal,tilt_to_goal]
-                except:
-                  nepi_msg.publishMsgWarn(self,"Tracking to excpetion: " + str(e))
-                #nepi_msg.publishMsgWarn(self,"Tracking to pan tilt: " + str(pan_to_goal) + " " + str(tilt_to_goal))
-              else:
-                pass # add timed jog controls
+              #nepi_msg.publishMsgWarn(self,"Current Pos: " + str([pan_cur,tilt_cur]))
+              #nepi_msg.publishMsgWarn(self,"Track to Pos: " + str([pan_to_goal,tilt_to_goal]))
+              if self.has_position_feedback == True:
+                # Send angle goal
+                pt_pos_msg = PanTiltPosition()
+                pt_pos_msg.yaw_deg = pan_to_goal
+                pt_pos_msg.pitch_deg = tilt_to_goal
+                if not nepi_ros.is_shutdown():
+                  try:
+                    self.set_pt_position_pub.publish(pt_pos_msg)   
+                    self.pan_tilt_goal_deg = [pan_to_goal,tilt_to_goal]
+                  except:
+                    nepi_msg.publishMsgWarn(self,"Tracking to excpetion: " + str(e))
+                  #nepi_msg.publishMsgWarn(self,"Tracking to pan tilt: " + str(pan_to_goal) + " " + str(tilt_to_goal))
+                else:
+                  pass # add timed jog controls
 
-        if was_tracking == False:
-          self.publish_status()
+          if was_tracking == False:
+            self.publish_status()
     # Publish errors msg
     if pt_status_msg is not None:
       tracking_error_msg = TrackingErrors()

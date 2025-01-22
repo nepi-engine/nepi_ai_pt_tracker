@@ -19,8 +19,7 @@ float32[] tilt_min_max_deg
 float32[] pan_min_max_deg
 float32[] set_tilt_min_max_deg
 float32[] set_pan_min_max_deg
-float32 max_scan_time_sec
-float32 scan_time_sec
+float32 track_update_rate_hz
 float32 min_area_ratio
 float32 scan_speed_ratio
 float32 scan_tilt_offset

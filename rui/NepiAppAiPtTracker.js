@@ -91,15 +91,14 @@ class AiPtTrackerApp extends Component {
       set_tilt_min: -30,
       set_tilt_max: 30,
 
-      max_scan_time_sec: null,
-      scan_time_sec: null,
-
       min_area_ratio: null,
       scan_speed_ratio: null,
       scan_tilt_offset: null,
       track_speed_ratio: null,
       track_tilt_offset: null,
-      
+      track_update_rate: null,
+
+
       error_goal_min_max_deg: [1,20],
       error_goal_deg: null,
 
@@ -197,8 +196,7 @@ class AiPtTrackerApp extends Component {
       set_tilt_min: set_tilt_min_max_deg[0],
       set_tilt_max: set_tilt_min_max_deg[1],
 
-      max_scan_time_sec: message.max_scan_time_sec,
-      scan_time_sec: message.scan_time_sec,
+      track_update_rate: message.track_update_rate_hz,
 
       min_area_ratio: message.min_area_ratio,
       scan_speed_ratio: message.scan_speed_ratio,
@@ -595,6 +593,18 @@ renderPtSettings() {
           
                   </Column>
                 </Columns>
+
+                    <SliderAdjustment
+                  title={"Track Update Rate (Hz)"}
+                  msgType={"std_msgs/float32"}
+                  adjustment={this.state.track_update_rate}
+                  topic={appNamespace + "/set_track_update_rate"}
+                  scaled={1.0}
+                  min={1}
+                  max={5}
+                  tooltip={""}
+                  unit={""}
+              />
 
 
                 <Columns>
