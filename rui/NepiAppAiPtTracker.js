@@ -35,7 +35,7 @@ import AiDetectorMgr from "./NepiMgrAiDetector"
 import CameraViewer from "./CameraViewer"
 import NepiIFSaveData from "./Nepi_IF_SaveData"
 
-import {createShortUniqueValues, onDropdownSelectedSendStr, createMenuListFromStrList, onUpdateSetStateValue} from "./Utilities"
+import {createShortUniqueValues, onDropdownSelectedSendStr, onDropdownSelectedSetState, createMenuListFromStrList, onUpdateSetStateValue} from "./Utilities"
 
 function round(value, decimals = 0) {
   return Number(value).toFixed(decimals)
@@ -56,23 +56,26 @@ class AiPtTrackerApp extends Component {
       baseNamespace: null,
 
       app_enabled: false,
-      app_msg: "Connecting",
+      app_msg: "Loading",
 
       image_name: "tracking_image",
 
 
+      show_target_settings: false,
       classifier_running: false,
+      available_classes_list: [],
+      selected_class: "None",
+      target_detected: false,
 
-
+      show_image_settings: false,
+      display_image_options: ["Source","Detection","Tracking"],
+      selected_display_image: "Tracking",
       image_topic: "None",
       image_fov_vert_degs: null,
       image_fov_horz_degs: null,
 
             
-      available_classes_list: [],
-      selected_class: "None",
-      target_detected: false,
-            
+      show_pt_settings: false,     
       selected_pantilt: "None",
       pantilt_connected: false,
       has_position_feedback: false,
@@ -100,8 +103,13 @@ class AiPtTrackerApp extends Component {
       error_goal_min_max_deg: [1,20],
       error_goal_deg: null,
 
+      target_q_len: null,
+      target_l_len: null,
+      target_c_len: null,
+
       is_scanning: false,
       is_tracking: false,
+      pan_direction: 1,
 
       statusListener: null,
       statusErrorListener: null,
@@ -110,9 +118,12 @@ class AiPtTrackerApp extends Component {
       needs_update: true,
 
 
-
-      pitch_deg: null,
-      yaw_deg: null
+      pitch_cur_deg: null,
+      pitch_error_deg: null,
+      pitch_goal_deg: null,
+      yaw_cur_deg: null,
+      yaw_error_deg: null,
+      yaw_goal_deg: null
 
     }
 
@@ -123,6 +134,10 @@ class AiPtTrackerApp extends Component {
     this.getAppNamespace = this.getAppNamespace.bind(this)
     this.createPTXOptions = this.createPTXOptions.bind(this)
     this.onEnterSendInputBoxRangeWindowValue = this.onEnterSendInputBoxRangeWindowValue.bind(this)
+    this.onClickToggleShowPtSettings = this.onClickToggleShowPtSettings.bind(this)
+    this.onClickToggleShowTargetSettings = this.onClickToggleShowTargetSettings.bind(this)
+    this.onClickToggleShowImageSettings = this.onClickToggleShowImageSettings.bind(this)
+    this.getDisplayImageInfo = this.getDisplayImageInfo.bind(this)
     
 
   }
@@ -191,13 +206,18 @@ class AiPtTrackerApp extends Component {
 
       track_speed_ratio: message.track_speed_ratio,
       track_tilt_offset: message.track_tilt_offset,
+
+      target_q_len: message.target_queue_len,
+      target_l_len: message.target_lost_len,
+      target_c_len: message.target_queue_count,
             
       error_goal_min_max_deg: message.error_goal_min_max_deg,
       error_goal_deg: message.error_goal_deg,
 
 
       is_scanning: message.is_scanning,
-      is_tracking: message.is_tracking  
+      is_tracking: message.is_tracking,
+      pan_direction: message.pan_direction
     
   })
 
@@ -211,9 +231,12 @@ class AiPtTrackerApp extends Component {
   // Callback for handling ROS Status messages
   statusErrorListener(message) {
     this.setState({
-
-      pitch_deg: message.pitch_deg,
-      yaw_deg: message.yaw_deg
+      pitch_cur_deg: message.pitch_cur_deg,
+      pitch_error_deg: message.pitch_error_deg,
+      pitch_goal_deg: message.pitch_goal_deg,
+      yaw_cur_deg: message.yaw_cur_deg,
+      yaw_error_deg: message.yaw_error_deg,
+      yaw_goal_deg: message.yaw_goal_deg
     
   })
 
@@ -322,24 +345,18 @@ onEnterSendInputBoxRangeWindowValue(event, topicName, entryName, other_val) {
 
 renderApp() {
   const {sendTriggerMsg, sendBoolMsg} = this.props.ros
-  const pantilt_options = this.createPTXOptions()
-  const sel_pantilt = this.state.selected_pantilt
   const pantilt_connected = this.state.pantilt_connected
-  const NoneOption = <Option>None</Option>
   const selectedClass = this.state.selected_class
   const class_sel = selectedClass !== null && selectedClass !== 'None'
   const connected = this.state.connected === true
   const appNamespace = this.getAppNamespace()
-  const set_tilt_min = this.state.set_tilt_min ? this.state.set_tilt_min : -180
-  const set_tilt_max = this.state.set_tilt_max ? this.state.set_tilt_max : 180
 
 
   return (
-    <Section title={"AI PT Tracking App"}>
+    <Section title={"PT Tracking App"}>
 
     <Columns>
       <Column>
-
 
 
       <Columns>
@@ -348,14 +365,14 @@ renderApp() {
             <div hidden={(connected === true)}>
 
               <pre style={{ height: "40px", overflowY: "auto" ,fontWeight: 'bold' , color: Styles.vars.colors.Green, textAlign: "left" }}>
-                  {"Loading or Refresh Page"}
+                  {"Loading"}
                 </pre>
 
               </div>
 
               <div hidden={(connected === false)}>
 
-                <Label title="Enable App">
+                <Label title="Enable Tracking">
                     <Toggle
                     checked={this.state.app_enabled===true}
                     onClick={() => sendBoolMsg(appNamespace + "/enable_app",!this.state.app_enabled)}>
@@ -373,20 +390,20 @@ renderApp() {
 
 
 
-    <div hidden={(connected !== true || this.state.app_enabled !== true)}>
+    <div hidden={(connected !== true )}>
 
       <Columns>
         <Column>
 
 
+        <Label title={"PanTilt Connected"}>
+            <BooleanIndicator value={pantilt_connected} />
+          </Label>
+
           <Label title={"AI Detection Running"}>
             <BooleanIndicator value={this.state.classifier_running} />
           </Label>
 
-
-          <Label title={"Pantilt Connected"}>
-            <BooleanIndicator value={pantilt_connected} />
-          </Label>
 
           <Label title={"Target Class Selected"}>
             <BooleanIndicator value={class_sel} />
@@ -416,119 +433,110 @@ renderApp() {
 
     <Columns>
         <Column>
+        <Label title={"Pan Deg"}>
+            <Input disabled value={round(this.state.yaw_cur_deg,2)} />
+          </Label> 
+        <Label title={"Pan Error"}>
+            <Input disabled value={round(this.state.yaw_error_deg,2)} />
+          </Label> 
+          <Label title={"Pan Goal"}>
+            <Input disabled value={round(this.state.yaw_goal_deg,2)} />
+          </Label> 
 
-           <Label title={"Pitch Deg Error"}>
-            <Input disabled value={round(this.state.pitch_deg,2)} />
+
+          <Label title={"Pan Direction"}>
+            <Input disabled value={this.state.pan_direction} />
           </Label>
+
 
       </Column>
       <Column>
 
-              <Label title={"Yaw Deg Error"}>
-            <Input disabled value={round(this.state.yaw_deg,2)} />
-          </Label> 
+      <Label title={"Tilt Deg"}>
+            <Input disabled value={round(this.state.pitch_cur_deg,2)} />
+          </Label>
+
+      <Label title={"Tilt Error"}>
+            <Input disabled value={round(this.state.pitch_error_deg,2)} />
+          </Label>
+          <Label title={"Tilt Goal"}>
+            <Input disabled value={round(this.state.pitch_goal_deg,2)} />
+          </Label>
+
+          <Label title={"Target Count"}>
+            <Input disabled value={this.state.target_c_len} />
+          </Label>
   
       </Column>
     </Columns>
 
 
 
-
       <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
 
-      <label style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}>
-        {"Image Settings"}
-      </label>
+      <Columns>
+          <Column>
+
+            <ButtonMenu>
+              <Button onClick={() => sendTriggerMsg( appNamespace + "/reset_app")}>{"Reset App"}</Button>
+            </ButtonMenu>
+
+            </Column>
+          <Column>
+
+              <ButtonMenu>
+                <Button onClick={() => sendTriggerMsg(appNamespace + "/save_config")}>{"Save Config"}</Button>
+          </ButtonMenu>
+
+          </Column>
+          <Column>
+
+          <ButtonMenu>
+                <Button onClick={() => sendTriggerMsg( appNamespace + "/reset_config")}>{"Reset Config"}</Button>
+          </ButtonMenu>
+
+
+          </Column>
+        </Columns>
+
+        </div>
+
+    </Column>
+      </Columns>
+
+    </Section>
+
+  
+  )
+}
+
+
+onClickToggleShowPtSettings(){
+  const currentVal = this.state.show_pt_settings 
+  this.setState({show_pt_settings: !currentVal})
+  this.render()
+}
+
+renderPtSettings() {
+  const {sendTriggerMsg, sendBoolMsg} = this.props.ros
+  const pantilt_options = this.createPTXOptions()
+  const sel_pantilt = this.state.selected_pantilt
+  const pantilt_connected = this.state.pantilt_connected
+  const set_tilt_min = this.state.set_tilt_min ? this.state.set_tilt_min : -180
+  const set_tilt_max = this.state.set_tilt_max ? this.state.set_tilt_max : 180
+  const NoneOption = <Option>None</Option>
+  const connected = this.state.connected === true
+  const appNamespace = this.getAppNamespace()
+
+
+
+  return (
+    <Section title={"PanTilt Settings"}>
 
     <Columns>
       <Column>
 
-
-      <SliderAdjustment
-          title={"Image Vertical (Degs)"}
-          msgType={"std_msgs/float32"}
-          adjustment={this.state.image_fov_vert_degs}
-          topic={appNamespace + "/set_image_fov_vert"}
-          scaled={1.0}
-          min={50}
-          max={150}
-          tooltip={""}
-          unit={""}
-      />
-
-
-      </Column>
-      <Column>
-
-
-      <SliderAdjustment
-          title={"Image Horizontal (Degs)"}
-          msgType={"std_msgs/float32"}
-          adjustment={this.state.image_fov_horz_degs}
-          topic={appNamespace + "/set_image_fov_horz"}
-          scaled={1.0}
-          min={50}
-          max={150}
-          tooltip={""}
-          unit={""}
-      />
-
-      </Column>
-    </Columns>
-
-    <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
-    <label style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}>
-        {"Target Settings"}
-       </label>
-
-    <Columns>
-      <Column>
-
-
-          <Label title={"Select Target Class"}>
-          <Select
-            id="class_select"
-            onChange={(event) => onDropdownSelectedSendStr.bind(this)(event, appNamespace + "/select_class")}
-            value={this.state.selected_class}
-          >
-            {this.state.available_classes_list
-              ? createMenuListFromStrList(this.state.available_classes_list, false, [],['None'],[])
-              : NoneOption}
-          </Select>
-          </Label>
-
-      </Column>
-      <Column>
-
-          <SliderAdjustment
-              title={"Target Size Filter"}
-              msgType={"std_msgs/float32"}
-              adjustment={this.state.min_area_ratio}
-              topic={appNamespace + "/set_min_area_ratio"}
-              scaled={0.01}
-              min={0}
-              max={100}
-              tooltip={""}
-              unit={"%"}
-          />
-
-          <SliderAdjustment
-              title={"Set Error Goal (Degs)"}
-              msgType={"std_msgs/float32"}
-              adjustment={this.state.error_goal_deg}
-              topic={appNamespace + "/set_error_goal_deg"}
-              scaled={1.0}
-              min={this.state.error_goal_min_max_deg[0]}
-              max={this.state.error_goal_min_max_deg[1]}
-              tooltip={""}
-              unit={""}
-          />
-
-      </Column>
-    </Columns>
-
-
-    <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
+ 
     <label style={{fontWeight: 'bold'}} align={"left"} textAlign={"left"}>
         {"Pan Tilt Settings"}
        </label>
@@ -548,15 +556,27 @@ renderApp() {
               </Select>
             </Label>
 
+            <Label title="Show Settings">
+                    <Toggle
+                      checked={this.state.show_pt_settings===true}
+                      onClick={this.onClickToggleShowPtSettings}>
+                    </Toggle>
+                  </Label>
+
+
+             
           </Column>
           <Column>
  
+          </Column>
+          <Column>
+
           </Column>
         </Columns>
 
 
 
-      <div hidden={(pantilt_connected === false)}>
+        <div hidden={(this.state.show_pt_settings === false)}>
 
                 <Columns>
                   <Column>
@@ -683,20 +703,6 @@ renderApp() {
                           </div>
 
 
-                          <div hidden={this.state.has_position_feedback === false}>
-
-                              <SliderAdjustment
-                                  title={"Track Tilt Offset (Degs)"}
-                                  msgType={"std_msgs/float32"}
-                                  adjustment={this.state.track_tilt_offset}
-                                  topic={appNamespace + "/set_track_tilt_offset"}
-                                  scaled={1.0}
-                                  min={set_tilt_min/2}
-                                  max={set_tilt_max/2}
-                                  tooltip={""}
-                                  unit={""}
-                              />
-                          </div>
 
                 </Column>
               </Columns>
@@ -704,33 +710,213 @@ renderApp() {
 
       </div>
 
-      </div>
-      <div style={{ borderTop: "1px solid #ffffff", marginTop: Styles.vars.spacing.medium, marginBottom: Styles.vars.spacing.xs }}/>
+    </Column>
+      </Columns>
+
+    </Section>
+
+  
+  )
+}
+
+
+
+onClickToggleShowImageSettings(){
+  const currentVal = this.state.show_image_settings 
+  this.setState({show_image_settings: !currentVal})
+  this.render()
+}
+
+
+renderImageSettings() {
+  const NoneOption = <Option>None</Option>
+  const connected = this.state.connected === true
+  const appNamespace = this.getAppNamespace()
+
+  return (
+    <Section title={"Image Settings"}>
+
+
+          <Columns>
+          <Column>
+
+          <Label title={"Select Display Image"}>
+              <Select
+                id="selectedDisplayImage"
+                onChange={(event) => onDropdownSelectedSetState.bind(this)(event, "selected_display_image")}
+                value={this.state.selected_display_image}
+              >
+                {createMenuListFromStrList(this.state.display_image_options,false,[],[],[])}
+              </Select>
+            </Label>
+
+          </Column>
+          <Column>
+
+
+          <SliderAdjustment
+              title={"Image Vertical (Degs)"}
+              msgType={"std_msgs/float32"}
+              adjustment={this.state.image_fov_vert_degs}
+              topic={appNamespace + "/set_image_fov_vert"}
+              scaled={1.0}
+              min={50}
+              max={150}
+              tooltip={""}
+              unit={""}
+          />
+
+
+          </Column>
+          <Column>
+
+
+          <SliderAdjustment
+              title={"Image Horizontal (Degs)"}
+              msgType={"std_msgs/float32"}
+              adjustment={this.state.image_fov_horz_degs}
+              topic={appNamespace + "/set_image_fov_horz"}
+              scaled={1.0}
+              min={50}
+              max={150}
+              tooltip={""}
+              unit={""}
+          />
+
+          </Column>
+          </Columns>
+
+
+
+    </Section>
+
+  
+  )
+}
+
+
+onClickToggleShowTargetSettings(){
+  const currentVal = this.state.show_target_settings 
+  this.setState({show_target_settings: !currentVal})
+  this.render()
+}
+
+renderTargetSettings() {
+  const {sendTriggerMsg, sendBoolMsg} = this.props.ros
+  const NoneOption = <Option>None</Option>
+  const selectedClass = this.state.selected_class
+  const class_sel = selectedClass !== null && selectedClass !== 'None'
+  const connected = this.state.connected === true
+  const appNamespace = this.getAppNamespace()
+
+
+
+  return (
+    <Section title={"Target Settings"}>
+
+    <Columns>
+      <Column>
+
 
       <Columns>
-          <Column>
-
-            <ButtonMenu>
-              <Button onClick={() => sendTriggerMsg( appNamespace + "/reset_app")}>{"Reset App"}</Button>
-            </ButtonMenu>
-
-            </Column>
-          <Column>
-
-              <ButtonMenu>
-                <Button onClick={() => sendTriggerMsg(appNamespace + "/save_config")}>{"Save Config"}</Button>
-          </ButtonMenu>
-
-          </Column>
-          <Column>
-
-          <ButtonMenu>
-                <Button onClick={() => sendTriggerMsg( appNamespace + "/reset_config")}>{"Reset Config"}</Button>
-          </ButtonMenu>
+        <Column>
 
 
-          </Column>
-        </Columns>
+        <Label title={"Select Target Class"}>
+          <Select
+            id="class_select"
+            onChange={(event) => onDropdownSelectedSendStr.bind(this)(event, appNamespace + "/select_class")}
+            value={this.state.selected_class}
+          >
+            {this.state.available_classes_list
+              ? createMenuListFromStrList(this.state.available_classes_list, false, [],['None'],[])
+              : NoneOption}
+          </Select>
+          </Label>
+
+
+              <Label title="Show Settings">
+                    <Toggle
+                      checked={this.state.show_target_settings===true}
+                      onClick={this.onClickToggleShowTargetSettings}>
+                    </Toggle>
+                  </Label>
+
+        </Column>
+        <Column>
+
+        </Column>
+      </Columns>
+
+
+
+
+    <div hidden={(this.state.show_target_settings === false)}>
+
+  
+
+
+    <Columns>
+      <Column>
+
+
+          <SliderAdjustment
+              title={"Target Size Filter"}
+              msgType={"std_msgs/float32"}
+              adjustment={this.state.min_area_ratio}
+              topic={appNamespace + "/set_min_area_ratio"}
+              scaled={0.01}
+              min={0}
+              max={100}
+              tooltip={""}
+              unit={"%"}
+          />
+
+          <SliderAdjustment
+              title={"Set Error Goal (Degs)"}
+              msgType={"std_msgs/float32"}
+              adjustment={this.state.error_goal_deg}
+              topic={appNamespace + "/set_error_goal_deg"}
+              scaled={1.0}
+              min={this.state.error_goal_min_max_deg[0]}
+              max={this.state.error_goal_min_max_deg[1]}
+              tooltip={""}
+              unit={""}
+          />
+
+
+
+
+
+          <SliderAdjustment
+              title={"Target Queue Length"}
+              msgType={"std_msgs/int32"}
+              adjustment={this.state.target_q_len}
+              topic={appNamespace + "/set_target_queue_len"}
+              scaled={1.0}
+              min={1}
+              max={10}
+              tooltip={""}
+              unit={""}
+          />
+
+
+          <SliderAdjustment
+              title={"Target Lost Length"}
+              msgType={"std_msgs/int32"}
+              adjustment={this.state.target_l_len}
+              topic={appNamespace + "/set_target_lost_len"}
+              scaled={1.0}
+              min={1}
+              max={10}
+              tooltip={""}
+              unit={""}
+          />
+
+      </Column>
+    </Columns>
+
+  </div>
 
 
 
@@ -744,50 +930,85 @@ renderApp() {
 }
 
 
+getDisplayImageInfo(){
+  const sel_image = this.state.selected_display_image
+  const { namespacePrefix, deviceId} = this.props.ros
+  var namespace = ""
+  var text = ""
+  if (sel_image === 'Source') {
+    namespace = this.state.image_topic
+    text = "Source"
+  }
+  else if (sel_image === 'Detection'){
+    namespace = "/" + namespacePrefix + "/" + deviceId + "/" + 'ai_detector_mgr/detection_image'
+    text = "Detection"
+  }
+  else {
+    namespace = "/" + namespacePrefix + "/" + deviceId + "/" + this.state.appName + '/' + this.state.image_name
+    text = "Tracking"
+  }
+  return [namespace,text]
+
+}
+
   render() {
     if (this.state.needs_update === true){
       this.setState({needs_update: false})
     }
     const connected = this.state.connected === true
     const appNamespace = (connected) ? this.getAppNamespace() : null
-    const imageNamespace = appNamespace + '/' + this.state.image_name
+    const [imageNamespace, imageText] = this.getDisplayImageInfo()
 
     return (
 
-      <Columns>
-      <Column equalWidth={true}>
+      <div style={{ display: 'flex' }}>
 
-       
-      <div hidden={!connected}>
+        <div style={{ width: '55%' }}>
+               {this.renderImageSettings()}
 
-      <NepiIFSaveData
-        saveNamespace={appNamespace}
-        title={"Nepi_IF_SaveData"}
-      />
+              <CameraViewer
+              imageTopic={imageNamespace}
+              title={imageText}
+              hideQualitySelector={false}
+            />
 
+            <div hidden={!connected}>
+
+            <NepiIFSaveData
+              saveNamespace={appNamespace}
+              title={"Nepi_IF_SaveData"}
+            />
+
+              </div>
+
+
+        </div>
+
+
+        <div style={{ width: '5%' }}>
+          {}
+        </div>
+
+
+        <div style={{ width: '40%' }}>
+
+              {this.renderApp()}
+
+              <div hidden={(this.state.connected === false)} >
+
+              {this.renderPtSettings()}                
+
+                <AiDetectorMgr
+                        title={"Nepi_Mgr_AI_Detector"}
+                />
+
+                {this.renderTargetSettings()}
+              </div>
+
+        </div>
       </div>
 
-      <CameraViewer
-        imageTopic={imageNamespace}
-        title={this.state.image_name}
-        hideQualitySelector={false}
-      />
 
-
-      </Column>
-      <Column>
-
-
-      <AiDetectorMgr
-              title={"Nepi_Mgr_AI_Detector"}
-          />
-
-
-
-      {this.renderApp()}
-
-      </Column>
-      </Columns>
 
       )
     }  

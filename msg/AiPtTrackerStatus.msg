@@ -31,8 +31,13 @@ float32 track_tilt_offset
 float32[] error_goal_min_max_deg
 float32 error_goal_deg
 
+int32 target_queue_len
+int32 target_lost_len
+int32 target_queue_count
+
 bool is_scanning
 bool is_tracking
+int32 pan_direction
 
 
 
